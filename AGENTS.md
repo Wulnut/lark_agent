@@ -22,6 +22,7 @@
 * **协议层**: MCP (Model Context Protocol) 使用 `FastMCP` 框架
 * **环境**: Docker (基于 `python:3.11-slim-bookworm`)
 * **异步模型**: 基于 `asyncio` 的 Future/Promise 模式
+* **严格文档规范**: 所以开发计划都需要更新到doc目录中，并严格按照doc目录中的要求进行实际开发
 
 ---
 

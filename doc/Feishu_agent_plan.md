@@ -1,64 +1,128 @@
 # Feishu Agent 技术方案
 
-## 1. 技术栈选型 (Technical Stack)
+## 1. 通用规则 (General Rules)
 
-| 维度 | 选择 | 理由 |
-| --- | --- | --- |
-| **编程语言** | **Python 3.11** | 性能优异，原生支持现代异步语法，Agent 生态最成熟。 |
-| **开发 SDK** | **`lark-oapi` (v3.x)** | 飞书官方维护，支持全量 API 且完美适配异步调用。 |
-| **包管理** | **`uv`** | 2026 年主流，极速安装依赖并自带虚拟环境管理。 |
-| **运行环境** | **Docker** | 实现环境隔离与无状态部署，方便未来在云端水平扩展。 |
-| **核心协议** | **MCP (Model Context Protocol)** | 跨模型标准协议，确保工具能被任何主流 LLM 调用。 |
-
-## 2. 核心架构设计 (Architecture & Design)
-
-我们将采用**分层模块化**的目录结构，并深度结合 **OOP（面向对象）** 与 **Provider（能力者）模式**。
-
-* **分层设计**：
-* **Core 层**：单例模式封装 `LarkClient`，管理 Token 和连接池。
-* **Tools - Common 层**：原子化的飞书基础能力（IM、Base、Drive）。
-* **Tools - Project 层**：按 API 类别封装的业务逻辑（工作项查询、排期同步）。
-
-* **Provider 模式**：
-* 定义通用的能力接口（如 `TaskProvider`），将“飞书项目”的具体实现与“Agent 调用”解耦。
-* **优势**：未来可轻松接入 Jira、Trello 或多维表格，而无需修改 Agent 逻辑。
+- **开发协议**: 严格遵循 [Development Protocol](First_stage/Development_Protocol.md) 中定义的 Bottom-Up 和 TDD 流程。
+- 始终使用中文回复用户，但技术专有名词可保留英文（如 API、Python、DTO 等）
+- 使用项目既有风格，不引入新风格，包括代码、文档或交互，默认延用项目中已有的格式、缩进、命名习惯
+- 尽可能少地输出内容，仅提供高信息密度回复，禁止无效寒暄、过度铺垫，只输出对当前任务有直接帮助的信息
 
 ---
 
-## 3. 异步处理方案 (Async/Future)
+## 2. 项目愿景 (Project Vision)
 
-* **模式**：全面采用 **Promise/Future (asyncio)** 模式。
-* **优势**：
-* **非阻塞**：在处理高并发事件订阅（如机器人被拉入千人群）时不会卡顿。
-* **并行化**：利用 `asyncio.gather` 同时调用多个飞书 API，极大缩短 Agent 的思考响应时间。
+构建一个从 **飞书项目 (Lark Project)** 起步，逐步演进为具备 **Workflow 编排** 与 **自主推理能力 (Agent)** 的企业级 AI 助手生态。
 
 ---
 
-## 4. 演进路线图 (Evolution Roadmap)
+## 3. 核心技术栈 (Technical Stack)
 
-我们将按阶段稳步推进，每一阶段的产出都是下一阶段的基石：
-
-1. **阶段一：MCP 落地 (当前)**
-
-* 完成飞书项目 API 的 OOP 封装。
-* 通过 MCP 协议将封装好的方法暴露为 LLM Tool。
-
-2. **阶段二：Workflow 编排 (中期)**
-
-* 将原子化的 Tool 引入工作流引擎（如 LangGraph）。
-* 实现具有确定逻辑的多步自动化任务（如：自动催办延期任务）。
-
-3. **阶段三：Autonomous Agent (终极)**
-
-* 赋予 AI 自主推理能力。
-* Agent 根据用户自然语言意图，自主组合并调用 Provider 库中的工具。
+* **语言**: Python 3.11+ (严格使用类型注解 Type Hints)
+* **依赖管理**: `uv` (使用 `pyproject.toml` 和 `uv.lock`)
+* **飞书 SDK**: `lark-oapi` & `httpx` (通用能力使用官方 SDK；飞书项目采用自定义异步客户端)
+* **协议层**: MCP (Model Context Protocol) 使用 `FastMCP` 框架
+* **环境**: Docker (基于 `python:3.11-slim-bookworm`)
+* **异步模型**: 基于 `asyncio` 的 Future/Promise 模式
+* **严格文档规范**: 所以开发计划都需要更新到doc目录中，并严格按照doc目录中的要求进行实际开发
 
 ---
 
-## 5. 工程化标准
+## 4. 项目结构规范 (Project Structure)
 
-* **代码风格**：强类型注解 (Type Hints) + 详细的 Docstring（作为 LLM 的说明书）。
-* **部署配置**：Dockerfile 配合环境变量管理，支持“开发/生产”多环境切换。
-* **错误处理**：将 SDK 底层错误转化为 Agent 可理解的业务提示语。
+### 4.1 目录组织
+
+```text
+src/
+├── core/           # 单例 Client, 配置中心 (pydantic-settings)
+├── providers/      # 核心层: 能力者模式实现
+│   ├── base.py     # 抽象基类 (Protocol/ABC)
+│   ├── common/     # 通用能力 (IM, Base, Drive)
+│   └── project/    # 飞书项目专用能力 (Items, Fields, Gantt)
+├── schemas/        # 数据模型 (Pydantic), 用于精简 API 返回值
+└── mcp_server.py   # MCP 接口层: 注册 Tool 与 Resource
+```
+
+### 4.2 结构原则
+
+- **分层组织**：按功能或领域划分目录，遵循"关注点分离"原则
+- **命名一致**：使用一致且描述性的目录和文件命名，反映其用途和内容
+- **模块化**：相关功能放在同一模块，减少跨模块依赖
+- **适当嵌套**：避免过深的目录嵌套，一般不超过 3-4 层
+- **资源分类**：区分代码、资源、配置和测试文件
+- **依赖管理**：集中管理依赖，避免多处声明
+- **约定优先**：遵循语言或框架的标准项目结构约定
+
+### 4.3 OOP 与 Provider 模式
+
+* **封装**: 所有飞书接口调用必须封装在 `Provider` 类中
+* **解耦**: 使用 **Provider 模式**。`mcp_server.py` 只与 `Provider` 抽象接口交互，不直接操作底层 SDK
+* **精简**: Provider 必须对飞书原始 JSON 进行数据清洗，仅向 Agent 返回核心业务字段，以节省 Token
 
 ---
+
+## 5. 通用开发原则 (Development Principles)
+
+- **可测试性**：编写可测试的代码，组件应保持单一职责
+- **DRY 原则**：避免重复代码，提取共用逻辑到单独的函数或类
+- **代码简洁**：保持代码简洁明了，遵循 KISS 原则（保持简单直接）
+- **命名规范**：使用描述性的变量、函数和类名，反映其用途和含义
+- **注释文档**：为复杂逻辑添加注释，编写清晰的文档说明功能和用法
+- **风格一致**：遵循项目或语言的官方风格指南和代码约定
+- **利用生态**：优先使用成熟的库和工具，避免不必要的自定义实现
+- **架构设计**：考虑代码的可维护性、可扩展性和性能需求
+- **版本控制**：编写有意义的提交信息，保持逻辑相关的更改在同一提交中
+- **异常处理**：正确处理边缘情况和错误，提供有用的错误信息
+
+---
+
+## 6. 开发守则 (Development Rules)
+
+### 6.1 异步优先 (Async First)
+
+* 所有的 API 请求必须使用异步方法
+* 示例: 使用 `client.im.v1.message.acreate()` 而不是 `create()`
+* 处理多个并发请求时，使用 `asyncio.gather()`
+
+### 6.2 错误处理
+
+* 不允许直接抛出飞书 SDK 的原始异常
+* 必须在 Provider 层捕获异常，并返回人类/Agent 可读的中文错误提示
+
+### 6.3 文档注释 (Docstrings)
+
+* 每个 `mcp.tool()` 必须包含极其详尽的 Docstring
+* **Docstring 必须描述**: 1. 工具的功能；2. 参数的业务含义；3. 预期返回的结果
+
+---
+
+## 7. 演进路线图 (Roadmap)
+
+1. **Stage 1 (Current)**: 飞书项目 MCP 落地，实现工作项 CRUD 自动化
+2. **Stage 2**: 引入 LangGraph 进行逻辑编排 (Workflow)
+3. **Stage 3**: 完整 Agent 化，支持自然语言决策
+
+---
+
+## 8. 开发指令速查 (Quick Reference)
+
+> 当开发新功能时，请确保：
+> 1. 检查 `src/core/client.py` 确保单例调用
+> 2. 在 `src/providers/` 下按类别创建新的类
+> 3. 在 `main.py` 中使用 `FastMCP` 注册工具
+> 4. 保持代码符合 Python 3.11 的异步高性能标准
+
+---
+
+## 9. 可用 Skills
+
+本项目配置了以下按需加载的 Skills（位于 `.opencode/skill/`）：
+
+| Skill | 描述 |
+|-------|------|
+| `python-dev` | Python 编码规则和最佳实践 |
+| `typescript-dev` | TypeScript 编码规则和最佳实践 |
+| `cpp-dev` | 现代 C++ (C++17/20) 编码规则 |
+| `git-commit` | Git 提交规范和分支管理 |
+| `gitflow` | Gitflow 工作流规则 |
+| `document` | Markdown 文档编写规范 |
+| `riper-5` | RIPER-5 严格模式协议 |

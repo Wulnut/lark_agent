@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | **基础运行环境** | **Python 3.11.x** | 兼顾性能与 `asyncio` 稳定性。 |
 | **依赖管理工具** | **uv** | 替代 pip，管理虚拟环境并锁定 `uv.lock` 以保证 Docker 构建一致性。 |
-| **飞书底层通信** | **`lark-oapi`** | 官方 SDK，负责鉴权、自动重试及原生异步接口。 |
+| **飞书底层通信** | **`lark-oapi`** + **`httpx`** | 官方 SDK 用于通讯录/IM；**飞书项目** API 采用 `httpx` 实现自定义异步调用。 |
 | **MCP 实现框架** | **`FastMCP` (python-mcp)** | 类似 FastAPI 的装饰器风格，极大简化工具注册过程。 |
 | **配置与校验** | **`pydantic-settings`** | 基于 Pydantic v2，严格校验 `.env` 环境变量中的 AppID/Secret。 |
 
@@ -18,8 +18,10 @@
 
 #### **A. 基础支持库 (Core Methods)**
 
-* **`AuthManager` (单例)**：处理 `tenant_access_token`。飞书项目的 API 有时需要特殊的 `project_token` 或 `user_token`，该库负责根据调用上下文自动切换。
-* **`AsyncHttpClient`**：封装 `lark-oapi` 的异步 Request 模板，统一处理请求超时和错误捕获（Error Handling）。
+* **`AuthManager` (单例)**：统一管理 Token。对于飞书项目，需特别维护 `X-PLUGIN-TOKEN` 和 `X-USER-KEY` 的生命周期。
+* **`AsyncHttpClient`**：
+    * 针对通用飞书能力：复用 `lark-oapi` 的异步机制。
+    * 针对飞书项目：基于 `httpx` 封装 RESTful 请求，处理特殊的 Header 注入和 JSON 结构。
 
 #### **B. 通用方法库 (Common Library - `tools/common`)**
 
@@ -49,6 +51,7 @@ lark_mcp_stage1/
 ├── src/
 │   ├── core/
 │   │   ├── client.py   # 异步 LarkClient 封装
+│   │   ├── project_client.py # 异步 ProjectClient 封装
 │   │   └── config.py   # Pydantic Settings
 │   ├── providers/      # 能力者目录
 │   │   ├── base.py     # 抽象基类 (Abstract Base Class)
@@ -68,31 +71,32 @@ lark_mcp_stage1/
 
 ```python
 from typing import List, Dict
-from src.core.client import get_lark_client
+import httpx
+from src.core.client import get_project_client
 
 class ProjectItemProvider:
     def __init__(self, project_key: str):
         self.project_key = project_key
-        self.client = get_lark_client()
+        self.client = get_project_client()  # 自定义的 httpx 客户端
 
     async def fetch_active_tasks(self) -> List[Dict]:
         """
         [Future 模式] 异步获取所有进行中的任务
         """
-        # 1. 构造异步 Future
-        request = (
-            lark.api.project.v1.ListWorkItemRequest.builder()
-            .project_key(self.project_key)
-            .query('{"status_type": "in_progress"}')
-            .build()
-        )
+        # 1. 构造请求参数 (RESTful)
+        url = f"/open_api/{self.project_key}/work_item/filter"
+        payload = {
+            "work_item_status": ["in_progress"],
+            "page_size": 50
+        }
 
-        # 2. 等待结果 (Promise Resolved)
-        response = await self.client.project.v1.work_item.alist(request)
+        # 2. 发起异步调用 (httpx)
+        # client.post 会自动注入 X-PLUGIN-TOKEN 等 headers
+        response = await self.client.post(url, json=payload)
+        data = response.json()
 
         # 3. 数据清洗：只给 Agent 返回它关心的字段，减少 Token 消耗
-        return [{"id": i.id, "name": i.name} for i in response.data.items]
-
+        return [{"id": i["id"], "name": i["name"]} for i in data.get("data", [])]
 ```
 
 ---

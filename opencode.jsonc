@@ -1,0 +1,23 @@
+{
+    "$schema": "https://opencode.ai/config.json",
+    // language server protocol
+    "lsp": {
+        "python": {
+            "disabled": true
+        }
+    },
+    // mcp
+    "mcp": {
+        "context7": {
+            "type": "remote",
+            "url": "https://mcp.context7.com/mcp",
+            "headers": {
+                "CONTEXT7_API_KEY": "ctx7sk-dbfc5592-5ede-4933-abc1-b87b7da10549"
+            }
+        },
+        "deepwiki-sse": {
+            "type": "remote",
+            "url": "https://mcp.deepwiki.com/mcp"
+        }
+    }
+}
