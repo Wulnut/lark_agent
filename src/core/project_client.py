@@ -39,6 +39,12 @@ class ProjectClient:
     async def get(self, path: str, params: Optional[dict] = None):
         return await self.client.get(path, params=params)
 
+    async def put(self, path: str, json: Optional[dict] = None):
+        return await self.client.put(path, json=json)
+
+    async def delete(self, path: str):
+        return await self.client.delete(path)
+
 
 def get_project_client():
     global _project_client

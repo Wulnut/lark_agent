@@ -24,7 +24,7 @@ import os
 import sys
 
 # 将项目根目录添加到 Python 路径，确保能找到 src 目录
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.core.config import settings
 from src.core.project_client import get_project_client
