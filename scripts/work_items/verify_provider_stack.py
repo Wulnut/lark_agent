@@ -2,7 +2,7 @@
 Description: 验证 Provider Stack (API + Metadata + Business Logic)
     使用 WorkItemProvider 创建 Issue，完全依赖动态发现，无硬编码 ID。
 Usage:
-    uv run scripts/work_items/test_provider_stack.py
+    uv run scripts/work_items/verify_provider_stack.py
 """
 
 import asyncio
@@ -14,7 +14,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.core.config import settings
-from src.providers.project.items import WorkItemProvider
+from src.providers.project.work_item_provider import WorkItemProvider
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
