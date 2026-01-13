@@ -24,8 +24,9 @@ class Settings(BaseSettings):
     )
     FEISHU_PROJECT_USER_KEY: str | None = None  # X-USER-KEY
 
-    # 默认测试项目 (主流程测试空间)
-    FEISHU_PROJECT_KEY: str | None = None  # 用于集成测试的默认项目
+    # 默认项目 Key
+    FEISHU_PROJECT_KEY: str | None = None  # 生产/默认项目
+    FEISHU_TEST_PROJECT_KEY: str | None = None  # CI/测试专用项目
 
     # Plugin Auth (Preferred)
     FEISHU_PROJECT_PLUGIN_ID: str | None = None

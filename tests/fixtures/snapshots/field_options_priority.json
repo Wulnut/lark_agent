@@ -1,0 +1,8 @@
+{
+  "field": "优先级",
+  "options": {
+    "P0": "option_1",
+    "P1": "option_2",
+    "P2": "option_3"
+  }
+}

@@ -42,7 +42,7 @@ async def test_create_issue(mock_api, mock_metadata):
 
     # Check Metadata calls
     mock_metadata.get_project_key.assert_awaited_with("My Project")
-    mock_metadata.get_type_key.assert_awaited_with("proj_123", "Issue管理")
+    mock_metadata.get_type_key.assert_awaited_with("proj_123", "问题管理")
 
     # Check Create call
     # Create should be called with minimal fields first

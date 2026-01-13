@@ -45,9 +45,10 @@ jobs:
     env:
       LARK_APP_ID: ${{ secrets.LARK_APP_ID }}
       LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
-      FEISHU_PROJECT_USER_TOKEN: ${{ secrets.FEISHU_PROJECT_USER_TOKEN }}
+      FEISHU_PROJECT_PLUGIN_ID: ${{ secrets.FEISHU_PROJECT_PLUGIN_ID }}
+      FEISHU_PROJECT_PLUGIN_SECRET: ${{ secrets.FEISHU_PROJECT_PLUGIN_SECRET }}
       FEISHU_PROJECT_USER_KEY: ${{ secrets.FEISHU_PROJECT_USER_KEY }}
-      FEISHU_PROJECT_KEY: ${{ secrets.FEISHU_PROJECT_KEY }}
+      FEISHU_TEST_PROJECT_KEY: ${{ secrets.FEISHU_TEST_PROJECT_KEY }}
 
     steps:
       - uses: actions/checkout@v4

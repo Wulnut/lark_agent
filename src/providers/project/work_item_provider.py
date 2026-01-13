@@ -24,7 +24,7 @@ class WorkItemProvider(Provider):
         self,
         project_name: Optional[str] = None,
         project_key: Optional[str] = None,
-        work_item_type_name: str = "Issue管理",
+        work_item_type_name: str = "问题管理",
     ):
         # 优先使用显式传入的参数，否则使用环境变量配置
         if not project_name and not project_key:

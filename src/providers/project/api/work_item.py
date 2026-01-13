@@ -191,6 +191,10 @@ class WorkItemAPI:
             raise Exception(f"Search Params failed: {err_msg}")
 
         result = data.get("data", {})
+        # 兼容不同的 API 返回格式: data 可能是 dict 或 list
+        if isinstance(result, list):
+            # 如果 data 是 list，则直接作为 work_items
+            result = {"work_items": result, "total": len(result)}
         items_count = len(result.get("work_items", []))
         logger.info("Search successful: retrieved %d items", items_count)
         return result
