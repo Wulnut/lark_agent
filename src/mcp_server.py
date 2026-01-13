@@ -98,9 +98,11 @@ def _create_provider(project: str) -> WorkItemProvider:
         WorkItemProvider 实例
     """
     if _looks_like_project_key(project):
+        logger.debug("Treating '%s' as project_key", project)
         return WorkItemProvider(project_key=project)
     else:
         # 当作项目名称处理
+        logger.debug("Treating '%s' as project_name", project)
         return WorkItemProvider(project_name=project)
 
 
@@ -121,9 +123,11 @@ async def list_projects() -> str:
         list_projects()
     """
     try:
+        logger.info("Listing all available projects")
         meta = MetadataManager.get_instance()
         projects = await meta.list_projects()
 
+        logger.info("Retrieved %d projects", len(projects))
         return json.dumps(
             {
                 "count": len(projects),
@@ -134,7 +138,7 @@ async def list_projects() -> str:
             indent=2,
         )
     except Exception as e:
-        logger.exception(f"Failed to list projects: {e}")
+        logger.error("Failed to list projects: %s", e, exc_info=True)
         return f"获取项目列表失败: {str(e)}"
 
 
@@ -183,6 +187,8 @@ async def create_task(
         )
     """
     try:
+        logger.info("Creating task: project=%s, name=%s, priority=%s, assignee=%s",
+                   project, name, priority, assignee)
         provider = _create_provider(project)
         issue_id = await provider.create_issue(
             name=name,
@@ -190,9 +196,11 @@ async def create_task(
             description=description,
             assignee=assignee,
         )
+        logger.info("Task created successfully: issue_id=%s", issue_id)
         return f"创建成功，Issue ID: {issue_id}"
     except Exception as e:
-        logger.exception(f"Failed to create task: {e}")
+        logger.error("Failed to create task: project=%s, name=%s, error=%s",
+                    project, name, e, exc_info=True)
         return f"创建失败: {str(e)}"
 
 
@@ -250,6 +258,8 @@ async def get_tasks(
         )
     """
     try:
+        logger.info("Getting tasks: project=%s, name_keyword=%s, status=%s, priority=%s, owner=%s, page=%d/%d",
+                   project, name_keyword, status, priority, owner, page_num, page_size)
         provider = _create_provider(project)
 
         # 解析逗号分隔的过滤条件
@@ -267,11 +277,13 @@ async def get_tasks(
 
         # 确保 result 是字典类型
         if not isinstance(result, dict):
-            logger.error(f"Unexpected result type: {type(result)}, value: {result}")
+            logger.error("Unexpected result type: %s, value: %s", type(result), result)
             return "获取任务列表失败: 返回数据格式错误"
 
         # 简化返回结果
         simplified = [_simplify_work_item(item) for item in result.get("items", [])]
+
+        logger.info("Retrieved %d tasks (total: %d)", len(simplified), result.get("total", 0))
 
         return json.dumps(
             {
@@ -284,7 +296,7 @@ async def get_tasks(
             indent=2,
         )
     except Exception as e:
-        logger.exception(f"Failed to get tasks: {e}")
+        logger.error("Failed to get tasks: project=%s, error=%s", project, e, exc_info=True)
         return f"获取任务列表失败: {str(e)}"
 
 
@@ -333,6 +345,8 @@ async def filter_tasks(
         )
     """
     try:
+        logger.info("Filtering tasks: project=%s, status=%s, priority=%s, owner=%s, page=%d/%d",
+                   project, status, priority, owner, page_num, page_size)
         provider = _create_provider(project)
 
         # 解析逗号分隔的过滤条件
@@ -352,6 +366,8 @@ async def filter_tasks(
             _simplify_work_item(item) for item in result.get("items", [])
         ]
 
+        logger.info("Filtered %d tasks (total: %d)", len(simplified_items), result.get("total", 0))
+
         return json.dumps(
             {
                 "total": result.get("total", 0),
@@ -363,7 +379,7 @@ async def filter_tasks(
             indent=2,
         )
     except Exception as e:
-        logger.exception(f"Failed to filter tasks: {e}")
+        logger.error("Failed to filter tasks: project=%s, error=%s", project, e, exc_info=True)
         return f"过滤失败: {str(e)}"
 
 
@@ -413,6 +429,8 @@ async def update_task(
         )
     """
     try:
+        logger.info("Updating task: project=%s, issue_id=%d, name=%s, priority=%s, status=%s, assignee=%s",
+                   project, issue_id, name, priority, status, assignee)
         provider = _create_provider(project)
         await provider.update_issue(
             issue_id=issue_id,
@@ -422,9 +440,11 @@ async def update_task(
             status=status,
             assignee=assignee,
         )
+        logger.info("Task updated successfully: issue_id=%d", issue_id)
         return f"更新成功，Issue ID: {issue_id}"
     except Exception as e:
-        logger.exception(f"Failed to update task: {e}")
+        logger.error("Failed to update task: project=%s, issue_id=%d, error=%s",
+                    project, issue_id, e, exc_info=True)
         return f"更新失败: {str(e)}"
 
 
@@ -452,16 +472,19 @@ async def get_task_options(project: str, field_name: str) -> str:
         get_task_options(project="SR6D2VA-7552-Lark", field_name="priority")
     """
     try:
+        logger.info("Getting task options: project=%s, field_name=%s", project, field_name)
         provider = _create_provider(project)
         options = await provider.list_available_options(field_name)
 
+        logger.info("Retrieved %d options for field '%s'", len(options), field_name)
         return json.dumps(
             {"field": field_name, "options": options},
             ensure_ascii=False,
             indent=2,
         )
     except Exception as e:
-        logger.exception(f"Failed to get options: {e}")
+        logger.error("Failed to get options: project=%s, field_name=%s, error=%s",
+                    project, field_name, e, exc_info=True)
         return f"获取选项失败: {str(e)}"
 
 
@@ -488,6 +511,7 @@ def main():
             filemode="a",
             encoding="utf-8",
         )
+        logger.info("Logging to file: %s", log_file)
     else:
         # 安装后可能没有 log 目录，只输出到 stderr
         logging.basicConfig(
@@ -495,9 +519,19 @@ def main():
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             stream=sys.stderr,
         )
+        logger.info("Logging to stderr (log directory not found)")
+
+    logger.info("Starting MCP Server (Lark Agent)")
+    logger.info("Log level: %s", settings.LOG_LEVEL)
 
     # 运行 MCP server
-    mcp.run()
+    try:
+        mcp.run()
+    except KeyboardInterrupt:
+        logger.info("MCP Server stopped by user")
+    except Exception as e:
+        logger.critical("MCP Server crashed: %s", e, exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

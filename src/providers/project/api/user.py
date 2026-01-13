@@ -9,8 +9,11 @@ UserAPI - 用户相关原子能力层
 - 用户 > 获取用户信息 > 查询用户组成员: POST /open_api/:project_key/user_groups/members/page
 """
 
+import logging
 from typing import Dict, List, Optional, Any
 from src.core.project_client import get_project_client, ProjectClient
+
+logger = logging.getLogger(__name__)
 
 
 class UserAPI:
@@ -41,14 +44,21 @@ class UserAPI:
         """
         url = f"/open_api/{project_key}/teams/all"
 
+        logger.debug("Getting team members: project_key=%s", project_key)
+
         resp = await self.client.get(url)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"获取团队成员失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("获取团队成员失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"获取团队成员失败: {err_msg}")
 
-        return data.get("data", [])
+        members = data.get("data", [])
+        logger.info("Retrieved %d team members", len(members))
+        return members
 
     async def query_users(
         self,
@@ -87,14 +97,21 @@ class UserAPI:
         if tenant_key:
             payload["tenant_key"] = tenant_key
 
+        logger.debug("Querying users: user_keys=%s, emails=%s", user_keys, emails)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"获取用户详情失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("获取用户详情失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"获取用户详情失败: {err_msg}")
 
-        return data.get("data", [])
+        users = data.get("data", [])
+        logger.info("Retrieved %d users", len(users))
+        return users
 
     async def search_users(
         self, query: str, project_key: Optional[str] = None
@@ -121,14 +138,21 @@ class UserAPI:
         if project_key:
             payload["project_key"] = project_key
 
+        logger.debug("Searching users: query=%s, project_key=%s", query, project_key)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"搜索用户失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("搜索用户失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"搜索用户失败: {err_msg}")
 
-        return data.get("data", [])
+        users = data.get("data", [])
+        logger.info("Found %d users matching query '%s'", len(users), query)
+        return users
 
     async def get_user_group_members(
         self,
@@ -165,14 +189,22 @@ class UserAPI:
             "page_size": page_size,
         }
 
+        logger.debug("Getting user group members: project_key=%s, group_type=%s, group_ids=%s",
+                    project_key, user_group_type, user_group_ids)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"查询用户组成员失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("查询用户组成员失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"查询用户组成员失败: {err_msg}")
 
-        return data.get("data", {})
+        result = data.get("data", {})
+        logger.debug("Retrieved user group members successfully")
+        return result
 
     async def create_user_group(
         self, project_key: str, name: str, users: List[str]
@@ -197,11 +229,19 @@ class UserAPI:
         url = f"/open_api/{project_key}/user_group"
         payload = {"name": name, "users": users}
 
+        logger.info("Creating user group: project_key=%s, name=%s, users=%s",
+                   project_key, name, users)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"创建用户组失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("创建用户组失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"创建用户组失败: {err_msg}")
 
-        return data.get("data", {})
+        result = data.get("data", {})
+        logger.info("User group created successfully")
+        return result

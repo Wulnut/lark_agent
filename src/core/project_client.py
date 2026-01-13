@@ -1,15 +1,25 @@
-import httpx
+"""
+Author: liangyz liangyz@seirobotics.net
+Date: 2026-01-12 17:56:08
+LastEditors: liangyz liangyz@seirobotics.net
+LastEditTime: 2026-01-13 23:57:21
+FilePath: /feishu_agent/src/core/project_client.py
+"""
+
 import logging
 from typing import Optional
+
+import httpx
 from tenacity import (
+    before_sleep_log,
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
 )
-from src.core.config import settings
+
 from src.core.auth import auth_manager
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +83,14 @@ class ProjectClient:
 
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url or settings.FEISHU_PROJECT_BASE_URL
+        logger.info("Initializing ProjectClient with base_url=%s", self.base_url)
         self.client = httpx.AsyncClient(
             base_url=self.base_url,
             headers={"Content-Type": "application/json"},
             auth=ProjectAuth(),
             timeout=httpx.Timeout(30.0),  # 30秒超时
         )
+        logger.debug("ProjectClient initialized successfully")
 
     def _get_retry_decorator(self):
         """获取重试装饰器配置"""
@@ -118,23 +130,44 @@ class ProjectClient:
 
         @self._get_retry_decorator()
         async def _do_request():
+            logger.debug("Making %s request to %s", method, path)
             if method == "GET":
                 response = await self.client.get(path, params=params)
             elif method == "POST":
+                logger.debug("POST payload: %s", json)
                 response = await self.client.post(path, json=json)
             elif method == "PUT":
+                logger.debug("PUT payload: %s", json)
                 response = await self.client.put(path, json=json)
             elif method == "DELETE":
                 response = await self.client.delete(path)
             else:
+                logger.error("Unsupported HTTP method: %s", method)
                 raise ValueError(f"Unsupported HTTP method: {method}")
+
+            logger.debug("Response status: %d from %s", response.status_code, path)
 
             # 5xx 错误触发重试
             if _should_retry_response(response):
                 logger.warning(
-                    f"Received {response.status_code} from {path}, will retry..."
+                    "Received %d from %s, will retry...", response.status_code, path
                 )
                 raise RetryableHTTPError(response)
+
+            if response.status_code >= 400:
+                logger.error(
+                    "HTTP error %d from %s: %s",
+                    response.status_code,
+                    path,
+                    response.text[:200],
+                )
+            else:
+                logger.info(
+                    "Request successful: %s %s -> %d",
+                    method,
+                    path,
+                    response.status_code,
+                )
 
             return response
 
@@ -158,12 +191,17 @@ class ProjectClient:
 
     async def close(self):
         """关闭客户端连接"""
+        logger.info("Closing ProjectClient connection")
         await self.client.aclose()
+        logger.debug("ProjectClient connection closed")
 
 
 def get_project_client() -> ProjectClient:
     """获取全局单例客户端"""
     global _project_client
     if not _project_client:
+        logger.debug("Creating new ProjectClient singleton instance")
         _project_client = ProjectClient()
+    else:
+        logger.debug("Reusing existing ProjectClient singleton instance")
     return _project_client

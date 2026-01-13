@@ -8,8 +8,11 @@ FieldAPI - L3 原子能力层
 - 配置 > 工作项配置 > 字段配置 > 更新自定义字段: PUT /open_api/:project_key/field/:work_item_type_key
 """
 
+import logging
 from typing import Dict, List, Optional, Any
 from src.core.project_client import get_project_client, ProjectClient
+
+logger = logging.getLogger(__name__)
 
 
 class FieldAPI:
@@ -45,14 +48,22 @@ class FieldAPI:
         url = f"/open_api/{project_key}/field/all"
         payload = {"work_item_type_key": work_item_type_key}
 
+        logger.debug("Getting all fields: project_key=%s, type_key=%s",
+                    project_key, work_item_type_key)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"获取字段信息失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("获取字段信息失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"获取字段信息失败: {err_msg}")
 
-        return data.get("data", [])
+        fields = data.get("data", [])
+        logger.info("Retrieved %d fields", len(fields))
+        return fields
 
     async def create_field(
         self,
@@ -88,14 +99,22 @@ class FieldAPI:
             **kwargs,
         }
 
+        logger.info("Creating field: project_key=%s, type_key=%s, name=%s, type=%s",
+                   project_key, work_item_type_key, field_name, field_type_key)
+
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"创建自定义字段失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("创建自定义字段失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"创建自定义字段失败: {err_msg}")
 
-        return data.get("data", {})
+        result = data.get("data", {})
+        logger.info("Field created successfully: field_key=%s", result.get("field_key"))
+        return result
 
     async def update_field(
         self, project_key: str, work_item_type_key: str, field_key: str, **kwargs
@@ -121,14 +140,23 @@ class FieldAPI:
         url = f"/open_api/{project_key}/field/{work_item_type_key}"
         payload: Dict[str, Any] = {"field_key": field_key, **kwargs}
 
+        logger.info("Updating field: project_key=%s, type_key=%s, field_key=%s",
+                   project_key, work_item_type_key, field_key)
+        logger.debug("Update kwargs: %s", kwargs)
+
         resp = await self.client.put(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"更新自定义字段失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("更新自定义字段失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"更新自定义字段失败: {err_msg}")
 
-        return data.get("data", {})
+        result = data.get("data", {})
+        logger.info("Field updated successfully")
+        return result
 
     async def get_work_item_relations(self, project_key: str) -> List[Dict]:
         """
@@ -148,11 +176,18 @@ class FieldAPI:
         """
         url = f"/open_api/{project_key}/work_item/relation"
 
+        logger.debug("Getting work item relations: project_key=%s", project_key)
+
         resp = await self.client.get(url)
         resp.raise_for_status()
         data = resp.json()
 
         if data.get("err_code") != 0:
-            raise Exception(f"获取工作项关系列表失败: {data.get('err_msg')}")
+            err_msg = data.get("err_msg", "Unknown error")
+            logger.error("获取工作项关系列表失败: err_code=%s, err_msg=%s",
+                        data.get("err_code"), err_msg)
+            raise Exception(f"获取工作项关系列表失败: {err_msg}")
 
-        return data.get("data", [])
+        relations = data.get("data", [])
+        logger.info("Retrieved %d work item relations", len(relations))
+        return relations
