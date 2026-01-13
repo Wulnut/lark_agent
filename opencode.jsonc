@@ -19,5 +19,14 @@
             "type": "remote",
             "url": "https://mcp.deepwiki.com/mcp"
         }
+    },
+    //permissions
+    "permission": {
+        "skill": {
+            "*": "allow",
+            "pr-review": "allow",
+            "internal-*": "ask",
+            "experimental-*": "ask"
+        }
     }
 }

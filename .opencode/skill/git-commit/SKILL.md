@@ -1,6 +1,18 @@
+<!--
+ * @Author: liangyz liangyz@seirobotics.net
+ * @Date: 2026-01-12 15:10:15
+ * @LastEditors: liangyz liangyz@seirobotics.net
+ * @LastEditTime: 2026-01-13 13:52:55
+ * @FilePath: /feishu_agent/.opencode/skill/git-commit/SKILL.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
 ---
 name: git-commit
 description: Git 提交规范和分支管理最佳实践，包括 Conventional Commits 格式和分支命名约定
+compatibility: opencode
+metadata:
+  audience: maintainers
+  workflow: github
 ---
 
 # Git 规范

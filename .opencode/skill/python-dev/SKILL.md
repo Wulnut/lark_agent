@@ -1,6 +1,18 @@
+<!--
+ * @Author: liangyz liangyz@seirobotics.net
+ * @Date: 2026-01-12 15:09:27
+ * @LastEditors: liangyz liangyz@seirobotics.net
+ * @LastEditTime: 2026-01-13 13:52:44
+ * @FilePath: /feishu_agent/.opencode/skill/python-dev/SKILL.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
 ---
 name: python-dev
 description: Python 编码规则和最佳实践，包括 PEP 8 风格、类型注解、虚拟环境、测试和文档规范
+compatibility: opencode
+metadata:
+  audience: maintainers
+  workflow: github
 ---
 
 # Python 开发规范

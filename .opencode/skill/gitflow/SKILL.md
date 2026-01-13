@@ -1,6 +1,10 @@
 ---
 name: gitflow
 description: Gitflow 工作流规则，包括分支策略、版本控制、PR 规则和发布流程
+compatibility: opencode
+metadata:
+  audience: maintainers
+  workflow: github
 ---
 
 # Gitflow 工作流规则

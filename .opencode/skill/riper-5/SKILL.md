@@ -1,6 +1,10 @@
 ---
 name: riper-5
 description: RIPER-5 严格模式协议，包含研究、创新、规划、执行、审查五个阶段的代码开发工作流
+compatibility: opencode
+metadata:
+  audience: maintainers
+  workflow: github
 ---
 
 # RIPER-5 协议

@@ -1,6 +1,18 @@
+<!--
+ * @Author: liangyz liangyz@seirobotics.net
+ * @Date: 2026-01-12 15:09:35
+ * @LastEditors: liangyz liangyz@seirobotics.net
+ * @LastEditTime: 2026-01-13 13:52:36
+ * @FilePath: /feishu_agent/.opencode/skill/typescript-dev/SKILL.md
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+-->
 ---
 name: typescript-dev
 description: TypeScript 编码规则和最佳实践，包括类型系统、严格模式、泛型和工具类型使用
+compatibility: opencode
+metadata:
+  audience: maintainers
+  workflow: github
 ---
 
 # TypeScript 开发规范
