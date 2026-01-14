@@ -10,8 +10,9 @@ UserAPI 测试模块
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from src.providers.project.api.user import UserAPI
+from tests.unit.providers.project.api.conftest import create_mock_response
 
 
 @pytest.fixture
@@ -29,21 +30,13 @@ def api(mock_client):
     return UserAPI()
 
 
-def create_response(data: dict):
-    """创建模拟响应对象"""
-    resp = MagicMock()
-    resp.json.return_value = data
-    resp.raise_for_status = MagicMock()
-    return resp
-
-
 class TestGetTeamMembers:
     """测试 get_team_members 方法"""
 
     @pytest.mark.asyncio
     async def test_get_team_members_success(self, api, mock_client):
         """测试正常获取团队成员"""
-        mock_client.get.return_value = create_response(
+        mock_client.get.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -65,7 +58,7 @@ class TestGetTeamMembers:
     @pytest.mark.asyncio
     async def test_get_team_members_empty(self, api, mock_client):
         """测试空团队"""
-        mock_client.get.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.get.return_value = create_mock_response({"err_code": 0, "data": []})
 
         result = await api.get_team_members("empty_project")
 
@@ -74,7 +67,7 @@ class TestGetTeamMembers:
     @pytest.mark.asyncio
     async def test_get_team_members_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.get.return_value = create_response(
+        mock_client.get.return_value = create_mock_response(
             {"err_code": 10001, "err_msg": "项目不存在"}
         )
 
@@ -90,7 +83,7 @@ class TestQueryUsers:
     @pytest.mark.asyncio
     async def test_query_users_by_keys(self, api, mock_client):
         """测试通过 user_keys 查询"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -112,7 +105,7 @@ class TestQueryUsers:
     @pytest.mark.asyncio
     async def test_query_users_by_emails(self, api, mock_client):
         """测试通过邮箱查询"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": [{"user_key": "user_1", "email": "test@test.com"}]}
         )
 
@@ -124,7 +117,9 @@ class TestQueryUsers:
     @pytest.mark.asyncio
     async def test_query_users_multiple_params(self, api, mock_client):
         """测试多参数组合查询"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": []}
+        )
 
         await api.query_users(
             user_keys=["key1"],
@@ -143,7 +138,7 @@ class TestQueryUsers:
     @pytest.mark.asyncio
     async def test_query_users_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10002, "err_msg": "用户不存在"}
         )
 
@@ -159,7 +154,7 @@ class TestSearchUsers:
     @pytest.mark.asyncio
     async def test_search_users_success(self, api, mock_client):
         """测试正常搜索用户"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -180,7 +175,9 @@ class TestSearchUsers:
     @pytest.mark.asyncio
     async def test_search_users_with_project_key(self, api, mock_client):
         """测试带项目限定的搜索"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": []}
+        )
 
         await api.search_users("test", project_key="test_project")
 
@@ -192,7 +189,9 @@ class TestSearchUsers:
     @pytest.mark.asyncio
     async def test_search_users_empty_result(self, api, mock_client):
         """测试空搜索结果"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": []}
+        )
 
         result = await api.search_users("不存在的用户")
 
@@ -201,7 +200,7 @@ class TestSearchUsers:
     @pytest.mark.asyncio
     async def test_search_users_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10003, "err_msg": "搜索失败"}
         )
 
@@ -217,7 +216,7 @@ class TestGetUserGroupMembers:
     @pytest.mark.asyncio
     async def test_get_user_group_members_success(self, api, mock_client):
         """测试正常获取用户组成员"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": {
@@ -239,7 +238,7 @@ class TestGetUserGroupMembers:
     @pytest.mark.asyncio
     async def test_get_user_group_members_pagination(self, api, mock_client):
         """测试分页参数"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": {"items": [], "total": 100}}
         )
 
@@ -255,7 +254,7 @@ class TestGetUserGroupMembers:
     @pytest.mark.asyncio
     async def test_get_user_group_members_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10004, "err_msg": "用户组不存在"}
         )
 
@@ -271,7 +270,7 @@ class TestCreateUserGroup:
     @pytest.mark.asyncio
     async def test_create_user_group_success(self, api, mock_client):
         """测试正常创建用户组"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": {"group_id": "new_group_123"}}
         )
 
@@ -290,7 +289,7 @@ class TestCreateUserGroup:
     @pytest.mark.asyncio
     async def test_create_user_group_error(self, api, mock_client):
         """测试创建失败"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10005, "err_msg": "用户组名称已存在"}
         )
 

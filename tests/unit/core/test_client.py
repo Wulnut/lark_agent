@@ -201,3 +201,103 @@ class TestProjectClientRetry:
         for call in route.calls:
             body = json.loads(call.request.content)
             assert body == {"important": "data"}
+
+
+@pytest.mark.asyncio
+async def test_project_client_close(respx_mock):
+    """Test ProjectClient.close() method properly closes connection."""
+    client = ProjectClient(base_url="https://mock.api")
+
+    # Verify client is initialized
+    assert client.client is not None
+    assert not client.client.is_closed
+
+    # Close the client
+    await client.close()
+
+    # Verify client is closed
+    assert client.client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_project_client_connection_timeout(respx_mock, monkeypatch):
+    """Test handling of connection timeout errors."""
+    import httpx
+
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_USER_TOKEN", "test_token")
+
+    client = ProjectClient(base_url="https://mock.api")
+
+    # Mock endpoint that raises timeout
+    route = respx_mock.get("https://mock.api/test").mock(
+        side_effect=httpx.TimeoutException("Connection timeout")
+    )
+
+    # Should raise TimeoutException
+    with pytest.raises(httpx.TimeoutException):
+        await client.get("/test")
+
+    assert route.called
+
+
+@pytest.mark.asyncio
+async def test_project_client_connect_error(respx_mock, monkeypatch):
+    """Test handling of connection errors."""
+    import httpx
+
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_USER_TOKEN", "test_token")
+
+    client = ProjectClient(base_url="https://mock.api")
+
+    # Mock endpoint that raises connection error
+    route = respx_mock.post("https://mock.api/test").mock(
+        side_effect=httpx.ConnectError("Failed to connect")
+    )
+
+    # Should raise ConnectError
+    with pytest.raises(httpx.ConnectError):
+        await client.post("/test", json={})
+
+    assert route.called
+
+
+@pytest.mark.asyncio
+async def test_project_client_read_timeout(respx_mock, monkeypatch):
+    """Test handling of read timeout errors."""
+    import httpx
+
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_USER_TOKEN", "test_token")
+
+    client = ProjectClient(base_url="https://mock.api")
+
+    # Mock endpoint that raises read timeout
+    route = respx_mock.get("https://mock.api/test").mock(
+        side_effect=httpx.ReadTimeout("Read timeout")
+    )
+
+    # Should raise ReadTimeout
+    with pytest.raises(httpx.ReadTimeout):
+        await client.get("/test")
+
+    assert route.called
+
+
+@pytest.mark.asyncio
+async def test_project_client_write_timeout(respx_mock, monkeypatch):
+    """Test handling of write timeout errors."""
+    import httpx
+
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_USER_TOKEN", "test_token")
+
+    client = ProjectClient(base_url="https://mock.api")
+
+    # Mock endpoint that raises write timeout
+    route = respx_mock.put("https://mock.api/test").mock(
+        side_effect=httpx.WriteTimeout("Write timeout")
+    )
+
+    # Should raise WriteTimeout
+    with pytest.raises(httpx.WriteTimeout):
+        await client.put("/test", json={})
+
+    assert route.called

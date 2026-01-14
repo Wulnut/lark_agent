@@ -7,8 +7,9 @@ ProjectAPI 测试模块
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from src.providers.project.api.project import ProjectAPI
+from tests.unit.providers.project.api.conftest import create_mock_response
 
 
 @pytest.fixture
@@ -26,21 +27,13 @@ def api(mock_client):
     return ProjectAPI()
 
 
-def create_response(data: dict):
-    """创建模拟响应对象"""
-    resp = MagicMock()
-    resp.json.return_value = data
-    resp.raise_for_status = MagicMock()
-    return resp
-
-
 class TestListProjects:
     """测试 list_projects 方法"""
 
     @pytest.mark.asyncio
     async def test_list_projects_success(self, api, mock_client):
         """测试正常获取空间列表"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": ["project_key_1", "project_key_2"]}
         )
 
@@ -56,7 +49,7 @@ class TestListProjects:
     @pytest.mark.asyncio
     async def test_list_projects_with_params(self, api, mock_client):
         """测试带参数的空间列表请求"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": ["project_key_1"]}
         )
 
@@ -80,7 +73,9 @@ class TestListProjects:
     @pytest.mark.asyncio
     async def test_list_projects_empty(self, api, mock_client):
         """测试空列表返回"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": []}
+        )
 
         result = await api.list_projects()
 
@@ -89,7 +84,7 @@ class TestListProjects:
     @pytest.mark.asyncio
     async def test_list_projects_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10001, "err_msg": "权限不足"}
         )
 
@@ -106,7 +101,7 @@ class TestGetProjectDetails:
     @pytest.mark.asyncio
     async def test_get_project_details_success(self, api, mock_client):
         """测试正常获取空间详情"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": {"project_key_1": {"name": "测试项目", "simple_name": "test"}},
@@ -125,7 +120,7 @@ class TestGetProjectDetails:
     @pytest.mark.asyncio
     async def test_get_project_details_multiple(self, api, mock_client):
         """测试批量获取多个空间详情"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": {"key_1": {"name": "项目1"}, "key_2": {"name": "项目2"}},
@@ -141,7 +136,7 @@ class TestGetProjectDetails:
     @pytest.mark.asyncio
     async def test_get_project_details_with_simple_names(self, api, mock_client):
         """测试使用简称查询"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": {"key_1": {"name": "项目1"}}}
         )
 
@@ -157,7 +152,7 @@ class TestGetProjectDetails:
     @pytest.mark.asyncio
     async def test_get_project_details_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10002, "err_msg": "项目不存在"}
         )
 
@@ -170,7 +165,9 @@ class TestGetProjectDetails:
     @pytest.mark.asyncio
     async def test_get_project_details_empty_keys(self, api, mock_client):
         """测试空 Key 列表"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": {}})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": {}}
+        )
 
         result = await api.get_project_details([])
 

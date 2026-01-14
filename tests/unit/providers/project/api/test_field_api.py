@@ -9,8 +9,9 @@ FieldAPI 测试模块
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from src.providers.project.api.field import FieldAPI
+from tests.unit.providers.project.api.conftest import create_mock_response
 
 
 @pytest.fixture
@@ -28,21 +29,13 @@ def api(mock_client):
     return FieldAPI()
 
 
-def create_response(data: dict):
-    """创建模拟响应对象"""
-    resp = MagicMock()
-    resp.json.return_value = data
-    resp.raise_for_status = MagicMock()
-    return resp
-
-
 class TestGetAllFields:
     """测试 get_all_fields 方法"""
 
     @pytest.mark.asyncio
     async def test_get_all_fields_success(self, api, mock_client):
         """测试正常获取字段列表"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -80,7 +73,9 @@ class TestGetAllFields:
     @pytest.mark.asyncio
     async def test_get_all_fields_empty(self, api, mock_client):
         """测试空字段列表"""
-        mock_client.post.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.post.return_value = create_mock_response(
+            {"err_code": 0, "data": []}
+        )
 
         result = await api.get_all_fields("project", "type")
 
@@ -89,7 +84,7 @@ class TestGetAllFields:
     @pytest.mark.asyncio
     async def test_get_all_fields_with_nested_options(self, api, mock_client):
         """测试带嵌套选项的字段"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -115,14 +110,12 @@ class TestGetAllFields:
     @pytest.mark.asyncio
     async def test_get_all_fields_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10001, "err_msg": "类型不存在"}
         )
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception, match=r"获取字段信息失败.*类型不存在"):
             await api.get_all_fields("project", "invalid_type")
-
-        assert "获取字段信息失败" in str(exc_info.value)
 
 
 class TestCreateField:
@@ -131,7 +124,7 @@ class TestCreateField:
     @pytest.mark.asyncio
     async def test_create_field_success(self, api, mock_client):
         """测试正常创建字段"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": {"field_key": "new_field_123"}}
         )
 
@@ -151,7 +144,7 @@ class TestCreateField:
     @pytest.mark.asyncio
     async def test_create_field_with_options(self, api, mock_client):
         """测试创建带选项的字段"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 0, "data": {"field_key": "select_field"}}
         )
 
@@ -172,7 +165,7 @@ class TestCreateField:
     @pytest.mark.asyncio
     async def test_create_field_error(self, api, mock_client):
         """测试创建字段失败"""
-        mock_client.post.return_value = create_response(
+        mock_client.post.return_value = create_mock_response(
             {"err_code": 10002, "err_msg": "字段名称已存在"}
         )
 
@@ -188,7 +181,7 @@ class TestUpdateField:
     @pytest.mark.asyncio
     async def test_update_field_success(self, api, mock_client):
         """测试正常更新字段"""
-        mock_client.put.return_value = create_response({"err_code": 0, "data": {}})
+        mock_client.put.return_value = create_mock_response({"err_code": 0, "data": {}})
 
         result = await api.update_field(
             "test_project", "story", field_key="field_123", field_name="新名称"
@@ -207,7 +200,7 @@ class TestUpdateField:
     @pytest.mark.asyncio
     async def test_update_field_error(self, api, mock_client):
         """测试更新字段失败"""
-        mock_client.put.return_value = create_response(
+        mock_client.put.return_value = create_mock_response(
             {"err_code": 10003, "err_msg": "字段不存在"}
         )
 
@@ -223,7 +216,7 @@ class TestGetWorkItemRelations:
     @pytest.mark.asyncio
     async def test_get_work_item_relations_success(self, api, mock_client):
         """测试正常获取工作项关系"""
-        mock_client.get.return_value = create_response(
+        mock_client.get.return_value = create_mock_response(
             {
                 "err_code": 0,
                 "data": [
@@ -244,7 +237,7 @@ class TestGetWorkItemRelations:
     @pytest.mark.asyncio
     async def test_get_work_item_relations_empty(self, api, mock_client):
         """测试空关系列表"""
-        mock_client.get.return_value = create_response({"err_code": 0, "data": []})
+        mock_client.get.return_value = create_mock_response({"err_code": 0, "data": []})
 
         result = await api.get_work_item_relations("project")
 
@@ -253,7 +246,7 @@ class TestGetWorkItemRelations:
     @pytest.mark.asyncio
     async def test_get_work_item_relations_error(self, api, mock_client):
         """测试 API 错误处理"""
-        mock_client.get.return_value = create_response(
+        mock_client.get.return_value = create_mock_response(
             {"err_code": 10004, "err_msg": "无权限"}
         )
 

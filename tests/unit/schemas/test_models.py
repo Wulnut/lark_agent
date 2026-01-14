@@ -11,27 +11,26 @@ from src.schemas.project import BaseResponse, WorkItemListData, WorkItem, Pagina
 class TestWorkItemBoundary:
     """WorkItem 模型边界测试"""
 
-    def test_missing_required_field_id(self):
-        """测试缺少必填字段 id 时抛出 ValidationError"""
-        raw = {
-            "name": "Task",
-            "project_key": "P1",
-            "work_item_type_key": "task",
-        }
+    @pytest.mark.parametrize(
+        "missing_field,raw_data",
+        [
+            pytest.param(
+                "id",
+                {"name": "Task", "project_key": "P1", "work_item_type_key": "task"},
+                id="missing_id",
+            ),
+            pytest.param(
+                "name",
+                {"id": 123, "project_key": "P1", "work_item_type_key": "task"},
+                id="missing_name",
+            ),
+        ],
+    )
+    def test_missing_required_field(self, missing_field: str, raw_data: dict):
+        """测试缺少必填字段时抛出 ValidationError"""
         with pytest.raises(ValidationError) as exc_info:
-            WorkItem.model_validate(raw)
-        assert "id" in str(exc_info.value)
-
-    def test_missing_required_field_name(self):
-        """测试缺少必填字段 name 时抛出 ValidationError"""
-        raw = {
-            "id": 123,
-            "project_key": "P1",
-            "work_item_type_key": "task",
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            WorkItem.model_validate(raw)
-        assert "name" in str(exc_info.value)
+            WorkItem.model_validate(raw_data)
+        assert missing_field in str(exc_info.value)
 
     def test_wrong_type_for_id(self):
         """测试 id 类型错误（字符串而非整数）"""
@@ -54,8 +53,14 @@ class TestWorkItemBoundary:
             "work_item_type_key": "task",
             "field_value_pairs": [
                 {"field_key": "status", "field_value": "进行中"},  # 字符串
-                {"field_key": "priority", "field_value": {"label": "P0", "value": "opt_p0"}},  # 对象
-                {"field_key": "owner", "field_value": [{"name": "张三", "user_key": "u1"}]},  # 数组
+                {
+                    "field_key": "priority",
+                    "field_value": {"label": "P0", "value": "opt_p0"},
+                },  # 对象
+                {
+                    "field_key": "owner",
+                    "field_value": [{"name": "张三", "user_key": "u1"}],
+                },  # 数组
             ],
         }
         item = WorkItem.model_validate(raw)
@@ -168,7 +173,12 @@ class TestBaseResponseBoundary:
             "msg": "success",
             "data": {
                 "data": [
-                    {"id": 1, "name": "Task", "project_key": "P1", "work_item_type_key": "task"}
+                    {
+                        "id": 1,
+                        "name": "Task",
+                        "project_key": "P1",
+                        "work_item_type_key": "task",
+                    }
                 ],
                 # pagination 字段缺失
             },

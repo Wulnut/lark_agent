@@ -18,6 +18,11 @@
         "deepwiki-sse": {
             "type": "remote",
             "url": "https://mcp.deepwiki.com/mcp"
+        },
+        "lark": {
+            "type": "local",
+            "enabled": true,
+            "command": ["uv", "run", "--directory", ".", "main.py"]
         }
     },
     //permissions
