@@ -661,61 +661,93 @@ class WorkItemProvider(Provider):
             MAX_TOTAL_ITEMS = 2000  # 最多扫描 2000 条记录
             MAX_PAGES = 40  # 最多 40 页
             BATCH_SIZE = 50  # 每批 50 条，减少内存占用
+            CONCURRENT_PAGES = 5  # 每次并发请求的页数
 
             found_items = []
             total_fetched = 0
             current_page = 1
 
             while total_fetched < MAX_TOTAL_ITEMS and current_page <= MAX_PAGES:
-                result = await self.api.filter(
-                    project_key=project_key,
-                    work_item_type_keys=[type_key],
-                    page_num=current_page,
-                    page_size=BATCH_SIZE,
+                # 确定本次并发请求的页码范围
+                end_page = min(current_page + CONCURRENT_PAGES, MAX_PAGES + 1)
+                page_range = range(current_page, end_page)
+                
+                tasks = []
+                for p in page_range:
+                    tasks.append(self.api.filter(
+                        project_key=project_key,
+                        work_item_type_keys=[type_key],
+                        page_num=p,
+                        page_size=BATCH_SIZE,
+                    ))
+
+                logger.info(
+                    "Fetching pages %d to %d concurrently...", 
+                    current_page, end_page - 1
                 )
+                
+                # 并发执行请求
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # 处理结果
+                batch_items_count = 0
+                should_stop = False
+                
+                for i, result in enumerate(results):
+                    page_num = current_page + i
+                    
+                    if isinstance(result, Exception):
+                        logger.error(f"Failed to fetch page {page_num}: {result}")
+                        continue
 
-                # 标准化返回结果
-                if isinstance(result, list):
-                    items = result
-                elif isinstance(result, dict):
-                    items = result.get("work_items", [])
-                else:
-                    break
+                    # 标准化返回结果
+                    if isinstance(result, list):
+                        items = result
+                    elif isinstance(result, dict):
+                        items = result.get("work_items", [])
+                    else:
+                        items = []
 
-                if not items:
-                    break
+                    if not items:
+                        should_stop = True
+                        # 不break，继续处理其他成功页面的结果
+                    
+                    batch_items_count += len(items)
+                    total_fetched += len(items)
 
-                total_fetched += len(items)
-
-                # 过滤关联工作项
-                for item in items:
-                    is_related = False
-                    fields = item.get("fields", [])
-                    for field in fields:
-                        field_value = field.get("field_value")
-                        if field_value:
-                            if isinstance(field_value, list):
-                                if related_to in field_value:
+                    # 过滤关联工作项
+                    for item in items:
+                        is_related = False
+                        fields = item.get("fields", [])
+                        for field in fields:
+                            field_value = field.get("field_value")
+                            if field_value:
+                                if isinstance(field_value, list):
+                                    if related_to in field_value:
+                                        is_related = True
+                                        break
+                                elif field_value == related_to:
                                     is_related = True
                                     break
-                            elif field_value == related_to:
-                                is_related = True
-                                break
-                    if is_related:
-                        found_items.append(item)
+                        if is_related:
+                            found_items.append(item)
+                    
+                    # 如果某一页的数据少于 BATCH_SIZE，说明已经是最后一页
+                    if len(items) < BATCH_SIZE:
+                        should_stop = True
 
                 logger.debug(
-                    "Fetched page %d: %d items, found %d related items so far",
+                    "Fetched pages %d-%d: %d items, found %d related items so far",
                     current_page,
-                    len(items),
+                    end_page - 1,
+                    batch_items_count,
                     len(found_items),
                 )
 
-                # 如果这一页的数据少于 BATCH_SIZE，说明已经是最后一页
-                if len(items) < BATCH_SIZE:
+                if should_stop:
                     break
 
-                current_page += 1
+                current_page += CONCURRENT_PAGES
 
             logger.info(
                 "Fetched %d items, found %d items related to %s",
