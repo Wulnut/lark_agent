@@ -654,28 +654,24 @@ class WorkItemProvider(Provider):
             and not priority
             and not owner
         ):
-            logger.info(f"Getting items for related_to filtering: {related_to}")
+            logger.info("Getting items for related_to filtering: %s", related_to)
 
-            # 配置限制：最多获取多少条记录，避免性能问题
-            MAX_TOTAL_ITEMS = 500
-            MAX_PAGES = 10
-            TARGET_RESULTS = 50  # 找到足够的结果后停止
+            # 配置限制：扫描足够的数据以确保找到所有关联项
+            # 注意：related_to 过滤只能在客户端进行，需要扫描较多数据
+            MAX_TOTAL_ITEMS = 2000  # 最多扫描 2000 条记录
+            MAX_PAGES = 40  # 最多 40 页
+            BATCH_SIZE = 50  # 每批 50 条，减少内存占用
 
             found_items = []
             total_fetched = 0
             current_page = 1
-            batch_size = 50  # 较小的批次，减少内存占用
 
-            while (
-                len(found_items) < TARGET_RESULTS
-                and total_fetched < MAX_TOTAL_ITEMS
-                and current_page <= MAX_PAGES
-            ):
+            while total_fetched < MAX_TOTAL_ITEMS and current_page <= MAX_PAGES:
                 result = await self.api.filter(
                     project_key=project_key,
                     work_item_type_keys=[type_key],
                     page_num=current_page,
-                    page_size=batch_size,
+                    page_size=BATCH_SIZE,
                 )
 
                 # 标准化返回结果
@@ -707,37 +703,34 @@ class WorkItemProvider(Provider):
                                 break
                     if is_related:
                         found_items.append(item)
-                        # 达到目标数量后立即停止
-                        if len(found_items) >= TARGET_RESULTS:
-                            break
 
                 logger.debug(
-                    f"Fetched page {current_page}: {len(items)} items, "
-                    f"found {len(found_items)} related items so far"
+                    "Fetched page %d: %d items, found %d related items so far",
+                    current_page,
+                    len(items),
+                    len(found_items),
                 )
 
-                # 如果这一页的数据少于 batch_size，说明已经是最后一页
-                if len(items) < batch_size:
+                # 如果这一页的数据少于 BATCH_SIZE，说明已经是最后一页
+                if len(items) < BATCH_SIZE:
                     break
 
                 current_page += 1
 
-                # 如果已经找到足够结果，停止获取更多数据
-                if len(found_items) >= TARGET_RESULTS:
-                    logger.info(
-                        f"Found target {TARGET_RESULTS} related items, stopping early"
-                    )
-                    break
-
             logger.info(
-                f"Fetched {total_fetched} items, found {len(found_items)} items related to {related_to}"
+                "Fetched %d items, found %d items related to %s",
+                total_fetched,
+                len(found_items),
+                related_to,
             )
 
             # 如果获取了大量数据但找到的关联项很少，记录警告
             if total_fetched > 200 and len(found_items) < 5:
                 logger.warning(
-                    f"Low efficiency: fetched {total_fetched} items but only found "
-                    f"{len(found_items)} related items. Consider using name_keyword to narrow search."
+                    "Low efficiency: fetched %d items but only found %d related items. "
+                    "Consider using name_keyword to narrow search.",
+                    total_fetched,
+                    len(found_items),
                 )
 
             return {
