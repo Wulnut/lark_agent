@@ -22,17 +22,36 @@ Description:
     - 如果用户提供的是项目名称（如 "SR6D2VA-7552-Lark"），系统会自动查找对应的 project_key
 """
 
+import httpx
 import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from src.core.config import settings
 from src.providers.project.managers import MetadataManager
 from src.providers.project.work_item_provider import WorkItemProvider
+
+
+def _mask_sensitive(value: str, visible_chars: int = 4) -> str:
+    """对敏感信息进行脱敏处理，仅显示前几个字符"""
+    if not value or len(value) <= visible_chars:
+        return "***"
+    return f"{value[:visible_chars]}***"
+
+
+def _mask_project(project: Optional[str]) -> str:
+    """对项目标识符进行脱敏"""
+    if not project:
+        return "(default)"
+    if project.startswith("project_"):
+        return f"project_{project[8:12]}***" if len(project) > 12 else "project_***"
+    # 项目名称只显示前4个字符
+    return _mask_sensitive(project)
+
 
 # 在模块级别配置日志（确保在 logger 创建前配置）
 # 检查是否已经配置过日志，避免重复配置
@@ -62,58 +81,9 @@ logger.debug("Logger initialized for module: %s", __name__)
 mcp = FastMCP("Lark")
 
 
-def _extract_field_value(item: dict, field_key: str) -> Optional[str]:
-    """从工作项中提取字段值"""
-    field_pairs = item.get("field_value_pairs", [])
-    for pair in field_pairs:
-        if pair.get("field_key") == field_key:
-            value = pair.get("field_value")
-            # 处理选项类型字段
-            if isinstance(value, dict):
-                return value.get("label") or value.get("value")
-            # 处理用户类型字段
-            if isinstance(value, list) and value:
-                first = value[0]
-                if isinstance(first, dict):
-                    return first.get("name") or first.get("name_cn")
-            return str(value) if value else None
-    return None
-
-
-def _simplify_work_item(item: dict) -> dict:
-    """将工作项简化为摘要格式，减少 Token 消耗"""
-    return {
-        "id": item.get("id"),
-        "name": item.get("name"),
-        "status": _extract_field_value(item, "status"),
-        "priority": _extract_field_value(item, "priority"),
-        "owner": _extract_field_value(item, "owner"),
-    }
-
-
-def _looks_like_project_key(identifier: str) -> bool:
-    """
-    判断标识符是否像 project_key 格式
-
-    project_key 通常是:
-    - 以 "project_" 开头
-    - 纯字母数字下划线组合
-    - 不包含中文或空格
-    """
-    if not identifier:
-        return False
-
-    # 明确的 project_key 前缀
-    if identifier.startswith("project_"):
-        return True
-
-    # 包含中文或空格，肯定是名称
-    if any("\u4e00" <= c <= "\u9fff" for c in identifier):
-        return False
-    if " " in identifier or "-" in identifier:
-        return False
-
-    return False
+def _is_project_key_format(identifier: str) -> bool:
+    """判断是否为 project_key 格式（以 'project_' 开头）"""
+    return bool(identifier and identifier.startswith("project_"))
 
 
 def _create_provider(
@@ -139,7 +109,7 @@ def _create_provider(
             return WorkItemProvider(work_item_type_name=work_item_type)
         return WorkItemProvider()
 
-    if _looks_like_project_key(project):
+    if _is_project_key_format(project):
         logger.debug("Treating '%s' as project_key", project)
         if work_item_type:
             return WorkItemProvider(
@@ -187,9 +157,13 @@ async def list_projects() -> str:
             ensure_ascii=False,
             indent=2,
         )
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error("Failed to list projects: %s", e, exc_info=True)
         return f"获取项目列表失败: {str(e)}"
+    except Exception as e:
+        # 捕获其他未知异常，但记录完整信息以便调试
+        logger.critical("Unexpected error listing projects: %s", e, exc_info=True)
+        return "获取项目列表失败: 系统内部错误"
 
 
 @mcp.tool()
@@ -233,12 +207,13 @@ async def create_task(
         )
     """
     try:
+        # 日志脱敏：不记录完整的项目标识符和任务名称
         logger.info(
-            "Creating task: project=%s, name=%s, priority=%s, assignee=%s",
-            project,
-            name,
+            "Creating task: project=%s, name_len=%d, priority=%s, has_assignee=%s",
+            _mask_project(project),
+            len(name) if name else 0,
             priority,
-            assignee,
+            bool(assignee),
         )
         provider = _create_provider(project)
         issue_id = await provider.create_issue(
@@ -249,15 +224,22 @@ async def create_task(
         )
         logger.info("Task created successfully: issue_id=%s", issue_id)
         return f"创建成功，Issue ID: {issue_id}"
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
-            "Failed to create task: project=%s, name=%s, error=%s",
-            project,
-            name,
+            "Failed to create task: project=%s, error=%s",
+            _mask_project(project),
             e,
             exc_info=True,
         )
         return f"创建失败: {str(e)}"
+    except Exception as e:
+        logger.critical(
+            "Unexpected error creating task: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
+        )
+        return "创建失败: 系统内部错误"
 
 
 @mcp.tool()
@@ -339,104 +321,27 @@ async def get_tasks(
         )
     """
     try:
-        # ========== 智能解析 related_to 参数 ==========
-        related_to_id = None
-        if related_to is not None:
-            if isinstance(related_to, str):
-                # 字符串：先尝试解析为数字
-                if related_to.isdigit():
-                    related_to_id = int(related_to)
-                    logger.info("Converted related_to string to ID: %s", related_to_id)
-                else:
-                    # 非数字字符串：按名称搜索工作项
-                    logger.info("Resolving related_to from name: '%s'", related_to)
-
-                    # 在常见工作项类型中搜索
-                    search_types = [
-                        "项目管理",
-                        "需求管理",
-                        "Issue管理",
-                        "任务",
-                        "Epic",
-                        "事务管理",
-                    ]
-                    found_item = None
-
-                    for search_type in search_types:
-                        try:
-                            temp_provider = _create_provider(project, search_type)
-                            search_result = await temp_provider.get_tasks(
-                                name_keyword=related_to, page_num=1, page_size=10
-                            )
-
-                            items = search_result.get("items", [])
-                            if items:
-                                # 优先精确匹配
-                                for item in items:
-                                    if item.get("name") == related_to:
-                                        found_item = item
-                                        logger.info(
-                                            "Found exact match: '%s' (ID: %s, Type: %s)",
-                                            item.get("name"),
-                                            item.get("id"),
-                                            search_type,
-                                        )
-                                        break
-
-                                # 如果没有精确匹配，取第一个部分匹配
-                                if not found_item:
-                                    found_item = items[0]
-                                    logger.info(
-                                        "Found partial match: '%s' (ID: %s, Type: %s)",
-                                        found_item.get("name"),
-                                        found_item.get("id"),
-                                        search_type,
-                                    )
-                                break
-                        except Exception as e:
-                            logger.debug(
-                                "Failed to search in type '%s': %s", search_type, e
-                            )
-                            continue
-
-                    if found_item:
-                        related_to_id = found_item.get("id")
-                        logger.info(
-                            "Resolved related_to '%s' -> ID: %s",
-                            related_to,
-                            related_to_id,
-                        )
-                    else:
-                        return (
-                            f"未找到名称为 '{related_to}' 的工作项，请检查名称是否正确"
-                        )
-
-            elif isinstance(related_to, int):
-                # 整数：直接使用
-                related_to_id = related_to
-                logger.info("Using related_to as ID: %s", related_to_id)
-            else:
-                # 其他类型：尝试转换
-                try:
-                    related_to_id = int(related_to)
-                    logger.info("Converted related_to to ID: %s", related_to_id)
-                except (ValueError, TypeError):
-                    return f"参数错误: related_to 必须是工作项 ID（整数）或名称（字符串），当前类型: {type(related_to)}"
-        # ========== 智能解析结束 ==========
-
         logger.info(
-            "Getting tasks: project=%s, work_item_type=%s, name_keyword=%s, status=%s, priority=%s, owner=%s, related_to=%s, page=%d/%d",
-            project,
+            "Getting tasks: project=%s, work_item_type=%s, has_name_keyword=%s, status=%s, priority=%s, has_owner=%s, has_related_to=%s, page=%d/%d",
+            _mask_project(project),
             work_item_type,
-            name_keyword,
+            bool(name_keyword),
             status,
             priority,
-            owner,
-            related_to_id,
+            bool(owner),
+            bool(related_to),
             page_num,
             page_size,
         )
         provider = _create_provider(project, work_item_type)
+
+        # 智能解析 related_to 参数（委托给 Provider）
+        related_to_id = None
+        if related_to is not None:
+            try:
+                related_to_id = await provider.resolve_related_to(related_to, project)
+            except ValueError as e:
+                return str(e)
 
         # 解析逗号分隔的过滤条件
         status_list = [s.strip() for s in status.split(",")] if status else None
@@ -458,7 +363,7 @@ async def get_tasks(
             return "获取任务列表失败: 返回数据格式错误"
 
         # 简化返回结果
-        simplified = [_simplify_work_item(item) for item in result.get("items", [])]
+        simplified = provider.simplify_work_items(result.get("items", []))
 
         logger.info(
             "Retrieved %d tasks (total: %d)", len(simplified), result.get("total", 0)
@@ -474,11 +379,22 @@ async def get_tasks(
             ensure_ascii=False,
             indent=2,
         )
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
-            "Failed to get tasks: project=%s, error=%s", project, e, exc_info=True
+            "Failed to get tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
         )
         return f"获取任务列表失败: {str(e)}"
+    except Exception as e:
+        logger.critical(
+            "Unexpected error getting tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
+        )
+        return "获取任务列表失败: 系统内部错误"
 
 
 @mcp.tool()
@@ -492,6 +408,9 @@ async def filter_tasks(
 ) -> str:
     """
     高级过滤查询工作项。
+
+    ⚠️ 注意: 此工具功能已被 get_tasks 完全覆盖，建议使用 get_tasks 替代。
+    保留此工具仅为向后兼容，未来版本可能移除。
 
     支持按状态、优先级、负责人进行组合过滤。
     字段值会自动转换为 API 所需的格式。
@@ -520,11 +439,11 @@ async def filter_tasks(
     """
     try:
         logger.info(
-            "Filtering tasks: project=%s, status=%s, priority=%s, owner=%s, page=%d/%d",
-            project,
+            "Filtering tasks: project=%s, status=%s, priority=%s, has_owner=%s, page=%d/%d",
+            _mask_project(project),
             status,
             priority,
-            owner,
+            bool(owner),
             page_num,
             page_size,
         )
@@ -543,9 +462,7 @@ async def filter_tasks(
         )
 
         # 简化返回结果
-        simplified_items = [
-            _simplify_work_item(item) for item in result.get("items", [])
-        ]
+        simplified_items = provider.simplify_work_items(result.get("items", []))
 
         logger.info(
             "Filtered %d tasks (total: %d)",
@@ -563,11 +480,22 @@ async def filter_tasks(
             ensure_ascii=False,
             indent=2,
         )
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
-            "Failed to filter tasks: project=%s, error=%s", project, e, exc_info=True
+            "Failed to filter tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
         )
         return f"过滤失败: {str(e)}"
+    except Exception as e:
+        logger.critical(
+            "Unexpected error filtering tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
+        )
+        return "过滤失败: 系统内部错误"
 
 
 @mcp.tool()
@@ -609,13 +537,13 @@ async def update_task(
     """
     try:
         logger.info(
-            "Updating task: project=%s, issue_id=%d, name=%s, priority=%s, status=%s, assignee=%s",
-            project,
+            "Updating task: project=%s, issue_id=%d, has_name=%s, priority=%s, status=%s, has_assignee=%s",
+            _mask_project(project),
             issue_id,
-            name,
+            bool(name),
             priority,
             status,
-            assignee,
+            bool(assignee),
         )
         provider = _create_provider(project)
         await provider.update_issue(
@@ -628,15 +556,24 @@ async def update_task(
         )
         logger.info("Task updated successfully: issue_id=%d", issue_id)
         return f"更新成功，Issue ID: {issue_id}"
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
             "Failed to update task: project=%s, issue_id=%d, error=%s",
-            project,
+            _mask_project(project),
             issue_id,
             e,
             exc_info=True,
         )
         return f"更新失败: {str(e)}"
+    except Exception as e:
+        logger.critical(
+            "Unexpected error updating task: project=%s, issue_id=%d, error=%s",
+            _mask_project(project),
+            issue_id,
+            e,
+            exc_info=True,
+        )
+        return "更新失败: 系统内部错误"
 
 
 @mcp.tool()
@@ -665,7 +602,9 @@ async def get_task_options(field_name: str, project: Optional[str] = None) -> st
     """
     try:
         logger.info(
-            "Getting task options: project=%s, field_name=%s", project, field_name
+            "Getting task options: project=%s, field_name=%s",
+            _mask_project(project),
+            field_name,
         )
         provider = _create_provider(project)
         options = await provider.list_available_options(field_name)
@@ -676,15 +615,24 @@ async def get_task_options(field_name: str, project: Optional[str] = None) -> st
             ensure_ascii=False,
             indent=2,
         )
-    except Exception as e:
+    except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
             "Failed to get options: project=%s, field_name=%s, error=%s",
-            project,
+            _mask_project(project),
             field_name,
             e,
             exc_info=True,
         )
         return f"获取选项失败: {str(e)}"
+    except Exception as e:
+        logger.critical(
+            "Unexpected error getting options: project=%s, field_name=%s, error=%s",
+            _mask_project(project),
+            field_name,
+            e,
+            exc_info=True,
+        )
+        return "获取选项失败: 系统内部错误"
 
 
 def main():

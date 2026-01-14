@@ -48,8 +48,11 @@ class FieldAPI:
         url = f"/open_api/{project_key}/field/all"
         payload = {"work_item_type_key": work_item_type_key}
 
-        logger.debug("Getting all fields: project_key=%s, type_key=%s",
-                    project_key, work_item_type_key)
+        logger.debug(
+            "Getting all fields: project_key=%s, type_key=%s",
+            project_key,
+            work_item_type_key,
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
@@ -57,8 +60,11 @@ class FieldAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取字段信息失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取字段信息失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取字段信息失败: {err_msg}")
 
         fields = data.get("data", [])
@@ -99,8 +105,13 @@ class FieldAPI:
             **kwargs,
         }
 
-        logger.info("Creating field: project_key=%s, type_key=%s, name=%s, type=%s",
-                   project_key, work_item_type_key, field_name, field_type_key)
+        logger.info(
+            "Creating field: project_key=%s, type_key=%s, name=%s, type=%s",
+            project_key,
+            work_item_type_key,
+            field_name,
+            field_type_key,
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
@@ -108,8 +119,11 @@ class FieldAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("创建自定义字段失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "创建自定义字段失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"创建自定义字段失败: {err_msg}")
 
         result = data.get("data", {})
@@ -140,8 +154,12 @@ class FieldAPI:
         url = f"/open_api/{project_key}/field/{work_item_type_key}"
         payload: Dict[str, Any] = {"field_key": field_key, **kwargs}
 
-        logger.info("Updating field: project_key=%s, type_key=%s, field_key=%s",
-                   project_key, work_item_type_key, field_key)
+        logger.info(
+            "Updating field: project_key=%s, type_key=%s, field_key=%s",
+            project_key,
+            work_item_type_key,
+            field_key,
+        )
         logger.debug("Update kwargs: %s", kwargs)
 
         resp = await self.client.put(url, json=payload)
@@ -150,8 +168,11 @@ class FieldAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("更新自定义字段失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "更新自定义字段失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"更新自定义字段失败: {err_msg}")
 
         result = data.get("data", {})
@@ -184,8 +205,11 @@ class FieldAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取工作项关系列表失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取工作项关系列表失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取工作项关系列表失败: {err_msg}")
 
         relations = data.get("data", [])

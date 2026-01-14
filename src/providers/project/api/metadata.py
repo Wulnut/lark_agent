@@ -51,8 +51,11 @@ class MetadataAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取工作项类型失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取工作项类型失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取工作项类型失败: {err_msg}")
 
         types = data.get("data", [])
@@ -85,8 +88,11 @@ class MetadataAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取业务线详情失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取业务线详情失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取业务线详情失败: {err_msg}")
 
         business_lines = data.get("data", [])
@@ -114,8 +120,11 @@ class MetadataAPI:
         """
         url = f"/open_api/{project_key}/work_item/type/{work_item_type_key}"
 
-        logger.debug("Getting work item type config: project_key=%s, type_key=%s",
-                    project_key, work_item_type_key)
+        logger.debug(
+            "Getting work item type config: project_key=%s, type_key=%s",
+            project_key,
+            work_item_type_key,
+        )
 
         resp = await self.client.get(url)
         resp.raise_for_status()
@@ -123,8 +132,11 @@ class MetadataAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取工作项类型配置失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取工作项类型配置失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取工作项类型配置失败: {err_msg}")
 
         config = data.get("data", {})
@@ -152,8 +164,11 @@ class MetadataAPI:
         """
         url = f"/open_api/{project_key}/template_list/{work_item_type_key}"
 
-        logger.debug("Getting workflow templates: project_key=%s, type_key=%s",
-                    project_key, work_item_type_key)
+        logger.debug(
+            "Getting workflow templates: project_key=%s, type_key=%s",
+            project_key,
+            work_item_type_key,
+        )
 
         resp = await self.client.get(url)
         resp.raise_for_status()
@@ -161,8 +176,11 @@ class MetadataAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取流程模板列表失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取流程模板列表失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取流程模板列表失败: {err_msg}")
 
         templates = data.get("data", [])

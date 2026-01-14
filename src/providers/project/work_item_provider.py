@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from src.core.config import settings
 from src.providers.base import Provider
@@ -102,6 +102,147 @@ class WorkItemProvider(Provider):
                         return first.get("name") or first.get("name_cn")
                 return str(value) if value else None
         return None
+
+    def simplify_work_item(self, item: dict) -> dict:
+        """
+        将工作项简化为摘要格式，减少 Token 消耗
+
+        Args:
+            item: 原始工作项字典
+
+        Returns:
+            简化后的工作项字典，包含 id, name, status, priority, owner
+        """
+        return {
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "status": self._extract_field_value(item, "status"),
+            "priority": self._extract_field_value(item, "priority"),
+            "owner": self._extract_field_value(item, "owner"),
+        }
+
+    def simplify_work_items(self, items: List[dict]) -> List[dict]:
+        """
+        批量简化工作项列表
+
+        Args:
+            items: 原始工作项列表
+
+        Returns:
+            简化后的工作项列表
+        """
+        return [self.simplify_work_item(item) for item in items]
+
+    async def resolve_related_to(
+        self, related_to: Union[int, str], project: Optional[str] = None
+    ) -> int:
+        """
+        解析 related_to 参数，将名称转换为工作项 ID
+
+        支持三种输入方式：
+        1. 整数: 直接返回
+        2. 数字字符串: 转换为整数返回
+        3. 非数字字符串: 在多个工作项类型中搜索，返回匹配的 ID
+
+        Args:
+            related_to: 工作项 ID 或名称
+            project: 项目标识符（可选），用于名称搜索
+
+        Returns:
+            工作项 ID
+
+        Raises:
+            ValueError: 未找到匹配的工作项
+        """
+        # 整数: 直接返回
+        if isinstance(related_to, int):
+            logger.info("resolve_related_to: 直接使用整数 ID: %s", related_to)
+            return related_to
+
+        # 字符串处理
+        if isinstance(related_to, str):
+            # 数字字符串: 转换为整数
+            if related_to.isdigit():
+                result = int(related_to)
+                logger.info("resolve_related_to: 字符串转整数 ID: %s", result)
+                return result
+
+            # 非数字字符串: 按名称搜索
+            logger.info("resolve_related_to: 按名称搜索 '%s'", related_to)
+
+            # 在常见工作项类型中搜索
+            search_types = [
+                "项目管理",
+                "需求管理",
+                "Issue管理",
+                "任务",
+                "Epic",
+                "事务管理",
+            ]
+            found_item = None
+
+            for search_type in search_types:
+                try:
+                    # 创建临时 Provider 搜索
+                    temp_provider = WorkItemProvider(
+                        project_name=self.project_name,
+                        project_key=self._project_key,
+                        work_item_type_name=search_type,
+                    )
+                    search_result = await temp_provider.get_tasks(
+                        name_keyword=related_to, page_num=1, page_size=10
+                    )
+
+                    items = search_result.get("items", [])
+                    if items:
+                        # 优先精确匹配
+                        for item in items:
+                            if item.get("name") == related_to:
+                                found_item = item
+                                logger.info(
+                                    "resolve_related_to: 精确匹配 '%s' (ID: %s, Type: %s)",
+                                    item.get("name"),
+                                    item.get("id"),
+                                    search_type,
+                                )
+                                break
+
+                        # 如果没有精确匹配，取第一个部分匹配
+                        if not found_item:
+                            found_item = items[0]
+                            logger.info(
+                                "resolve_related_to: 部分匹配 '%s' (ID: %s, Type: %s)",
+                                found_item.get("name"),
+                                found_item.get("id"),
+                                search_type,
+                            )
+                        break
+                except Exception as e:
+                    logger.debug(
+                        "resolve_related_to: 在类型 '%s' 中搜索失败: %s",
+                        search_type,
+                        e,
+                    )
+                    continue
+
+            if found_item:
+                result = found_item.get("id")
+                logger.info(
+                    "resolve_related_to: 解析 '%s' -> ID: %s", related_to, result
+                )
+                return result
+            else:
+                raise ValueError(f"未找到名称为 '{related_to}' 的工作项")
+
+        # 其他类型: 尝试转换
+        try:
+            result = int(related_to)
+            logger.info("resolve_related_to: 类型转换 ID: %s", result)
+            return result
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"related_to 必须是工作项 ID（整数）或名称（字符串），当前类型: {type(related_to)}"
+            )
 
     async def _resolve_field_value(
         self, project_key: str, type_key: str, field_key: str, value: Any
@@ -456,23 +597,40 @@ class WorkItemProvider(Provider):
         project_key = await self._get_project_key()
         type_key = await self._get_type_key()
 
-        # 特殊处理：当只有 related_to 参数时，需要获取所有工作项进行客户端过滤
+        # 特殊处理：当只有 related_to 参数时，需要获取工作项进行客户端过滤
         # 因为关联字段不支持 API 级别的过滤
-        if related_to and not name_keyword and not status and not priority and not owner:
-            logger.info(f"Getting all items for related_to filtering: {related_to}")
-            
-            all_items = []
+        # 优化：增量加载，达到结果数量限制后停止，避免全量扫描
+        if (
+            related_to
+            and not name_keyword
+            and not status
+            and not priority
+            and not owner
+        ):
+            logger.info(f"Getting items for related_to filtering: {related_to}")
+
+            # 配置限制：最多获取多少条记录，避免性能问题
+            MAX_TOTAL_ITEMS = 500
+            MAX_PAGES = 10
+            TARGET_RESULTS = 50  # 找到足够的结果后停止
+
+            found_items = []
+            total_fetched = 0
             current_page = 1
-            batch_size = 100
-            
-            while True:
+            batch_size = 50  # 较小的批次，减少内存占用
+
+            while (
+                len(found_items) < TARGET_RESULTS
+                and total_fetched < MAX_TOTAL_ITEMS
+                and current_page <= MAX_PAGES
+            ):
                 result = await self.api.filter(
                     project_key=project_key,
                     work_item_type_keys=[type_key],
                     page_num=current_page,
                     page_size=batch_size,
                 )
-                
+
                 # 标准化返回结果
                 if isinstance(result, list):
                     items = result
@@ -480,53 +638,69 @@ class WorkItemProvider(Provider):
                     items = result.get("work_items", [])
                 else:
                     break
-                
+
                 if not items:
                     break
-                
-                all_items.extend(items)
-                logger.debug(f"Fetched page {current_page}, got {len(items)} items, total: {len(all_items)}")
-                
+
+                total_fetched += len(items)
+
+                # 过滤关联工作项
+                for item in items:
+                    is_related = False
+                    fields = item.get("fields", [])
+                    for field in fields:
+                        field_value = field.get("field_value")
+                        if field_value:
+                            if isinstance(field_value, list):
+                                if related_to in field_value:
+                                    is_related = True
+                                    break
+                            elif field_value == related_to:
+                                is_related = True
+                                break
+                    if is_related:
+                        found_items.append(item)
+                        # 达到目标数量后立即停止
+                        if len(found_items) >= TARGET_RESULTS:
+                            break
+
+                logger.debug(
+                    f"Fetched page {current_page}: {len(items)} items, "
+                    f"found {len(found_items)} related items so far"
+                )
+
                 # 如果这一页的数据少于 batch_size，说明已经是最后一页
                 if len(items) < batch_size:
                     break
-                
+
                 current_page += 1
-                
-                # 安全限制：最多获取 20 页（2000 条记录）
-                if current_page > 20:
-                    logger.warning("Reached maximum page limit (20 pages)")
+
+                # 如果已经找到足够结果，停止获取更多数据
+                if len(found_items) >= TARGET_RESULTS:
+                    logger.info(
+                        f"Found target {TARGET_RESULTS} related items, stopping early"
+                    )
                     break
-            
-            logger.info(f"Fetched {len(all_items)} items in total, now filtering by related_to={related_to}")
-            
-            # 过滤关联工作项
-            filtered_items = []
-            for item in all_items:
-                is_related = False
-                fields = item.get("fields", [])
-                for field in fields:
-                    field_value = field.get("field_value")
-                    if field_value:
-                        if isinstance(field_value, list):
-                            if related_to in field_value:
-                                is_related = True
-                                break
-                        elif field_value == related_to:
-                            is_related = True
-                            break
-                if is_related:
-                    filtered_items.append(item)
-            
-            logger.info(f"Found {len(filtered_items)} items related to {related_to}")
-            
+
+            logger.info(
+                f"Fetched {total_fetched} items, found {len(found_items)} items related to {related_to}"
+            )
+
+            # 如果获取了大量数据但找到的关联项很少，记录警告
+            if total_fetched > 200 and len(found_items) < 5:
+                logger.warning(
+                    f"Low efficiency: fetched {total_fetched} items but only found "
+                    f"{len(found_items)} related items. Consider using name_keyword to narrow search."
+                )
+
             return {
-                "items": filtered_items,
-                "total": len(filtered_items),
+                "items": found_items,
+                "total": len(found_items),
                 "page_num": 1,
-                "page_size": len(filtered_items),
+                "page_size": len(found_items),
+                "hint": f"Found {len(found_items)} items related to {related_to} (searched {total_fetched} items)",
             }
-        
+
         # 如果提供了 name_keyword，优先使用 filter API（更高效）
         # filter API 支持 work_item_name 和 work_item_status，但不支持 priority/owner/related_to
         if name_keyword:
@@ -606,7 +780,9 @@ class WorkItemProvider(Provider):
                         "page_size": page_size,
                     }
             else:
-                logger.warning(f"Unexpected result type: {type(result)}, value: {result}")
+                logger.warning(
+                    f"Unexpected result type: {type(result)}, value: {result}"
+                )
                 items = []
                 pagination = {
                     "total": 0,
@@ -811,7 +987,7 @@ class WorkItemProvider(Provider):
                             break
                 if is_related:
                     filtered_items.append(item)
-            
+
             items = filtered_items
             logger.info(
                 f"Filtered results: {len(items)} items after related_to filtering"

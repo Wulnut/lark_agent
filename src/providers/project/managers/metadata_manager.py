@@ -28,7 +28,7 @@ MetadataManager - 级联缓存管理器
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 from src.providers.project.api import ProjectAPI, MetadataAPI, FieldAPI, UserAPI
 
@@ -84,6 +84,13 @@ class MetadataManager:
         self._project_lock = asyncio.Lock()  # 用于 project 缓存
         self._type_lock = asyncio.Lock()  # 用于 type 缓存
         self._user_lock = asyncio.Lock()  # 用于 user 缓存
+
+        # 缓存大小限制
+        self._max_project_cache_size = 50
+        self._max_type_cache_size = 100
+        self._max_field_cache_size = 200
+        self._max_option_cache_size = 500
+        self._max_user_cache_size = 200
 
         # L1: Project Name -> Project Key
         self._project_cache: Dict[str, str] = {}
@@ -204,6 +211,17 @@ class MetadataManager:
                     projects = temp_map
                 else:
                     projects = {}
+
+            # 填充缓存前检查大小，如果超过限制则清理最旧的条目
+            if len(self._project_cache) >= self._max_project_cache_size:
+                # 移除第一个条目（近似LRU）
+                keys = list(self._project_cache.keys())
+                if keys:
+                    oldest_key = keys[0]
+                    del self._project_cache[oldest_key]
+                    logger.debug(
+                        f"Project cache size limit reached, removed oldest entry: {oldest_key}"
+                    )
 
             # 填充缓存
             for key, info in projects.items():

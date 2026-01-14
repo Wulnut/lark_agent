@@ -7,7 +7,6 @@ MCP Server 工具测试
 """
 
 import json
-import re
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -19,7 +18,27 @@ class TestMCPTools:
     def mock_provider(self):
         """Mock WorkItemProvider"""
         with patch("src.mcp_server.WorkItemProvider") as mock_cls:
-            mock_instance = AsyncMock()
+            mock_instance = MagicMock()
+            # 设置异步方法
+            mock_instance.create_issue = AsyncMock()
+            mock_instance.get_tasks = AsyncMock()
+            mock_instance.filter_issues = AsyncMock()
+            mock_instance.update_issue = AsyncMock()
+            mock_instance.list_available_options = AsyncMock()
+            mock_instance.resolve_related_to = AsyncMock()
+            # 设置同步方法
+            mock_instance.simplify_work_items = MagicMock(
+                side_effect=lambda items: [
+                    {
+                        "id": item.get("id"),
+                        "name": item.get("name"),
+                        "status": None,
+                        "priority": None,
+                        "owner": None,
+                    }
+                    for item in items
+                ]
+            )
             mock_cls.return_value = mock_instance
             yield mock_instance
 
@@ -65,7 +84,7 @@ class TestMCPTools:
         )
 
         # 验证错误信息被传递（核心信息）
-        assert "API Error" in result
+        assert "系统内部错误" in result
 
     # =========================================================================
     # get_tasks 测试 (返回 JSON)
@@ -120,7 +139,7 @@ class TestMCPTools:
         result = await get_tasks(project="proj_xxx")
 
         # 验证错误信息被传递
-        assert "Network Error" in result
+        assert "系统内部错误" in result
 
     # =========================================================================
     # filter_tasks 测试 (返回 JSON)
@@ -224,7 +243,7 @@ class TestMCPTools:
         )
 
         # 验证错误信息被传递
-        assert "Field not found" in result
+        assert "系统内部错误" in result
 
     # =========================================================================
     # get_task_options 测试 (返回 JSON)
@@ -263,16 +282,25 @@ class TestMCPTools:
         result = await get_task_options(project="proj_xxx", field_name="unknown")
 
         # 验证错误信息被传递
-        assert "Unknown field" in result
+        assert "系统内部错误" in result
 
 
 class TestHelperFunctions:
-    """辅助函数测试"""
+    """辅助函数测试 - 测试 WorkItemProvider 中的辅助方法"""
 
-    def test_extract_field_value_simple(self):
+    @pytest.fixture
+    def provider(self):
+        """创建 WorkItemProvider 实例用于测试辅助方法"""
+        with patch(
+            "src.providers.project.work_item_provider.settings"
+        ) as mock_settings:
+            mock_settings.FEISHU_PROJECT_KEY = "test_project"
+            from src.providers.project.work_item_provider import WorkItemProvider
+
+            return WorkItemProvider()
+
+    def test_extract_field_value_simple(self, provider):
         """测试提取简单字段值"""
-        from src.mcp_server import _extract_field_value
-
         item = {
             "field_value_pairs": [
                 {"field_key": "name", "field_value": "Task Name"},
@@ -280,14 +308,12 @@ class TestHelperFunctions:
             ]
         }
 
-        assert _extract_field_value(item, "name") == "Task Name"
-        assert _extract_field_value(item, "priority") == "P0"
-        assert _extract_field_value(item, "nonexistent") is None
+        assert provider._extract_field_value(item, "name") == "Task Name"
+        assert provider._extract_field_value(item, "priority") == "P0"
+        assert provider._extract_field_value(item, "nonexistent") is None
 
-    def test_extract_field_value_dict(self):
+    def test_extract_field_value_dict(self, provider):
         """测试提取字典类型字段值（选项类型）"""
-        from src.mcp_server import _extract_field_value
-
         item = {
             "field_value_pairs": [
                 {
@@ -297,12 +323,10 @@ class TestHelperFunctions:
             ]
         }
 
-        assert _extract_field_value(item, "status") == "进行中"
+        assert provider._extract_field_value(item, "status") == "进行中"
 
-    def test_extract_field_value_user_list(self):
+    def test_extract_field_value_user_list(self, provider):
         """测试提取用户列表类型字段值"""
-        from src.mcp_server import _extract_field_value
-
         item = {
             "field_value_pairs": [
                 {
@@ -312,12 +336,10 @@ class TestHelperFunctions:
             ]
         }
 
-        assert _extract_field_value(item, "owner") == "张三"
+        assert provider._extract_field_value(item, "owner") == "张三"
 
-    def test_simplify_work_item(self):
+    def test_simplify_work_item(self, provider):
         """测试简化工作项"""
-        from src.mcp_server import _simplify_work_item
-
         item = {
             "id": 12345,
             "name": "Test Task",
@@ -337,10 +359,57 @@ class TestHelperFunctions:
             ],
         }
 
-        simplified = _simplify_work_item(item)
+        simplified = provider.simplify_work_item(item)
 
         assert simplified["id"] == 12345
         assert simplified["name"] == "Test Task"
         assert simplified["status"] == "进行中"
         assert simplified["priority"] == "P0"
         assert simplified["owner"] == "张三"
+
+    def test_simplify_work_items_batch(self, provider):
+        """测试批量简化工作项"""
+        items = [
+            {
+                "id": 1,
+                "name": "Task 1",
+                "field_value_pairs": [
+                    {"field_key": "status", "field_value": {"label": "待处理"}},
+                ],
+            },
+            {
+                "id": 2,
+                "name": "Task 2",
+                "field_value_pairs": [
+                    {"field_key": "status", "field_value": {"label": "进行中"}},
+                ],
+            },
+        ]
+
+        simplified = provider.simplify_work_items(items)
+
+        assert len(simplified) == 2
+        assert simplified[0]["id"] == 1
+        assert simplified[0]["status"] == "待处理"
+        assert simplified[1]["id"] == 2
+        assert simplified[1]["status"] == "进行中"
+
+
+class TestIsProjectKeyFormat:
+    """测试 _is_project_key_format 函数"""
+
+    def test_project_key_format(self):
+        """测试有效的 project_key 格式"""
+        from src.mcp_server import _is_project_key_format
+
+        assert _is_project_key_format("project_abc123") is True
+        assert _is_project_key_format("project_") is True
+
+    def test_non_project_key_format(self):
+        """测试非 project_key 格式"""
+        from src.mcp_server import _is_project_key_format
+
+        assert _is_project_key_format("") is False
+        assert _is_project_key_format("proj_xxx") is False
+        assert _is_project_key_format("My Project") is False
+        assert _is_project_key_format("项目名称") is False

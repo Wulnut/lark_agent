@@ -31,6 +31,12 @@ class AuthManager:
         """
         # 1. Check if a static token is provided (backward compatibility)
         if settings.FEISHU_PROJECT_USER_TOKEN:
+            # 安全警告：静态令牌无法检查过期状态，可能导致服务不可用
+            logger.warning(
+                "Using static FEISHU_PROJECT_USER_TOKEN. "
+                "Token expiration cannot be verified - if API calls fail, "
+                "please check if the token has expired."
+            )
             return settings.FEISHU_PROJECT_USER_TOKEN
 
         # 2. Check if plugin credentials are provided
@@ -75,7 +81,9 @@ class AuthManager:
                 # { "code": 0, "data": { "plugin_token": "...", "expire": 7200 } }
                 # 或者直接返回: { "plugin_token": "...", "expire": 7200 }
                 auth_data = data.get("data", data)
-                self._plugin_token = auth_data.get("plugin_token") or auth_data.get("token")
+                self._plugin_token = auth_data.get("plugin_token") or auth_data.get(
+                    "token"
+                )
 
                 if not self._plugin_token:
                     logger.error(
@@ -84,7 +92,9 @@ class AuthManager:
                     return None
 
                 # Buffer of 60 seconds
-                expires_in = auth_data.get("expire") or auth_data.get("expire_time") or 7200
+                expires_in = (
+                    auth_data.get("expire") or auth_data.get("expire_time") or 7200
+                )
                 self._expiry_time = time.time() + expires_in - 60
 
                 logger.info("Successfully refreshed Feishu Project plugin token")

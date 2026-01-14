@@ -61,8 +61,11 @@ class ProjectAPI:
         if order:
             payload["order"] = order
 
-        logger.debug("Listing projects: user_key=%s, tenant_group_id=%d",
-                    payload.get("user_key"), tenant_group_id)
+        logger.debug(
+            "Listing projects: user_key=%s, tenant_group_id=%d",
+            payload.get("user_key"),
+            tenant_group_id,
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
@@ -70,8 +73,11 @@ class ProjectAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取空间列表失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取空间列表失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取空间列表失败: {err_msg}")
 
         project_keys = data.get("data", [])
@@ -121,8 +127,11 @@ class ProjectAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取空间详情失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取空间详情失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取空间详情失败: {err_msg}")
 
         details = data.get("data", {})

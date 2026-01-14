@@ -6,6 +6,27 @@ from src.core.project_client import get_project_client
 logger = logging.getLogger(__name__)
 
 
+def _mask_sensitive(value: str, visible_chars: int = 4) -> str:
+    """对敏感信息进行脱敏处理，仅显示前几个字符"""
+    if not value or len(value) <= visible_chars:
+        return "***"
+    return f"{value[:visible_chars]}***"
+
+
+def _mask_project_key(project_key: str) -> str:
+    """对 project_key 进行脱敏"""
+    if not project_key:
+        return "***"
+    # project_key 格式通常为 "project_xxx"，保留前缀
+    if project_key.startswith("project_"):
+        return (
+            f"project_{project_key[8:12]}***"
+            if len(project_key) > 12
+            else "project_***"
+        )
+    return _mask_sensitive(project_key)
+
+
 class WorkItemAPI:
     """
     飞书项目工作项 API 封装 (Data Layer)
@@ -24,9 +45,15 @@ class WorkItemAPI:
         template_id: Optional[int] = None,
     ) -> int:
         """创建工作项"""
-        logger.info("Creating work item: project_key=%s, type_key=%s, name=%s",
-                   project_key, work_item_type_key, name)
-        logger.debug("Field value pairs: %s", field_value_pairs)
+        # 日志脱敏：不记录完整的 project_key 和任务名称
+        logger.info(
+            "Creating work item: project_key=%s, type_key=%s, name_len=%d",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            len(name) if name else 0,
+        )
+        # DEBUG 级别也进行脱敏，仅记录字段数量而非内容
+        logger.debug("Field value pairs count: %d", len(field_value_pairs))
 
         url = f"/open_api/{project_key}/work_item/create"
         payload = {
@@ -43,8 +70,11 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Create WorkItem failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Create WorkItem failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Create WorkItem failed: {err_msg}")
 
         issue_id = data.get("data")
@@ -59,8 +89,12 @@ class WorkItemAPI:
         expand: Optional[Dict] = None,
     ) -> List[Dict]:
         """批量获取工作项详情"""
-        logger.debug("Querying work items: project_key=%s, type_key=%s, ids=%s",
-                    project_key, work_item_type_key, work_item_ids)
+        logger.debug(
+            "Querying work items: project_key=%s, type_key=%s, ids_count=%d",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            len(work_item_ids),
+        )
 
         url = f"/open_api/{project_key}/work_item/{work_item_type_key}/query"
         payload = {"work_item_ids": work_item_ids, "expand": expand or {}}
@@ -69,8 +103,11 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Query WorkItem failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Query WorkItem failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Query WorkItem failed: {err_msg}")
 
         items = data.get("data", [])
@@ -85,9 +122,14 @@ class WorkItemAPI:
         update_fields: List[Dict],
     ) -> None:
         """更新工作项"""
-        logger.info("Updating work item: project_key=%s, type_key=%s, id=%d",
-                   project_key, work_item_type_key, work_item_id)
-        logger.debug("Update fields: %s", update_fields)
+        logger.info(
+            "Updating work item: project_key=%s, type_key=%s, id=%d",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            work_item_id,
+        )
+        # 仅记录更新字段数量，不记录具体内容
+        logger.debug("Update fields count: %d", len(update_fields))
 
         url = f"/open_api/{project_key}/work_item/{work_item_type_key}/{work_item_id}"
         payload = {"update_fields": update_fields}
@@ -96,8 +138,11 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Update WorkItem failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Update WorkItem failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Update WorkItem failed: {err_msg}")
 
         logger.info("Work item updated successfully: id=%d", work_item_id)
@@ -106,8 +151,12 @@ class WorkItemAPI:
         self, project_key: str, work_item_type_key: str, work_item_id: int
     ) -> None:
         """删除工作项"""
-        logger.warning("Deleting work item: project_key=%s, type_key=%s, id=%d",
-                      project_key, work_item_type_key, work_item_id)
+        logger.warning(
+            "Deleting work item: project_key=%s, type_key=%s, id=%d",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            work_item_id,
+        )
 
         url = f"/open_api/{project_key}/work_item/{work_item_type_key}/{work_item_id}"
         resp = await self.client.delete(url)
@@ -115,8 +164,11 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Delete WorkItem failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Delete WorkItem failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Delete WorkItem failed: {err_msg}")
 
         logger.info("Work item deleted successfully: id=%d", work_item_id)
@@ -131,9 +183,15 @@ class WorkItemAPI:
         **kwargs,
     ) -> Dict:
         """基础筛选"""
-        logger.debug("Filtering work items: project_key=%s, type_keys=%s, page=%d/%d",
-                   project_key, work_item_type_keys, page_num, page_size)
-        logger.debug("Filter kwargs: %s", kwargs)
+        logger.debug(
+            "Filtering work items: project_key=%s, type_keys=%s, page=%d/%d",
+            _mask_project_key(project_key),
+            work_item_type_keys,
+            page_num,
+            page_size,
+        )
+        # 仅记录过滤条件的键，不记录值
+        logger.debug("Filter kwargs keys: %s", list(kwargs.keys()))
 
         url = f"/open_api/{project_key}/work_item/filter"
         payload = {
@@ -148,23 +206,31 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Filter WorkItem failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Filter WorkItem failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Filter WorkItem failed: {err_msg}")
 
         result = data.get("data", {})
         # 处理返回格式：可能是 list 或 dict
         if isinstance(result, list):
             items_count = len(result)
-            logger.info("Filter successful: retrieved %d items (list format)", items_count)
-            return result
+            logger.info(
+                "Filter successful: retrieved %d items (list format)", items_count
+            )
+            # 包装 list 为标准字典格式
+            return {"work_items": result, "total": items_count, "pagination": {}}
         elif isinstance(result, dict):
             items_count = len(result.get("work_items", []))
-            logger.info("Filter successful: retrieved %d items (dict format)", items_count)
+            logger.info(
+                "Filter successful: retrieved %d items (dict format)", items_count
+            )
             return result
         else:
             logger.warning(f"Unexpected result format: {type(result)}")
-            return {"work_items": [], "pagination": {}}
+            return {"work_items": [], "total": 0, "pagination": {}}
 
     async def search_params(
         self,
@@ -176,9 +242,17 @@ class WorkItemAPI:
         fields: Optional[List[str]] = None,
     ) -> Dict:
         """复杂条件搜索"""
-        logger.debug("Searching work items with params: project_key=%s, type_key=%s, page=%d/%d",
-                   project_key, work_item_type_key, page_num, page_size)
-        logger.debug("Search group: %s", search_group)
+        logger.debug(
+            "Searching work items with params: project_key=%s, type_key=%s, page=%d/%d",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            page_num,
+            page_size,
+        )
+        # 仅记录搜索条件结构，不记录具体值
+        logger.debug(
+            "Search group keys: %s", list(search_group.keys()) if search_group else []
+        )
 
         url = f"/open_api/{project_key}/work_item/{work_item_type_key}/search/params"
         payload = {
@@ -195,8 +269,11 @@ class WorkItemAPI:
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Search Params failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Search Params failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Search Params failed: {err_msg}")
 
         result = data.get("data", {})
@@ -247,16 +324,24 @@ class WorkItemAPI:
             "after_field_value": field["field_value"],
         }
 
-        logger.info("Batch updating work items: project_key=%s, type_key=%s, ids=%s, field=%s",
-                   project_key, work_item_type_key, work_item_ids, field["field_key"])
+        logger.info(
+            "Batch updating work items: project_key=%s, type_key=%s, ids_count=%d, field=%s",
+            _mask_project_key(project_key),
+            work_item_type_key,
+            len(work_item_ids),
+            field["field_key"],
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("Batch Update failed: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "Batch Update failed: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"Batch Update failed: {err_msg}")
 
         task_id = data.get("data")
@@ -287,16 +372,22 @@ class WorkItemAPI:
         """
         url = f"/open_api/{project_key}/work_item/{work_item_type_key}/meta"
 
-        logger.debug("Getting create meta: project_key=%s, type_key=%s",
-                   project_key, work_item_type_key)
+        logger.debug(
+            "Getting create meta: project_key=%s, type_key=%s",
+            _mask_project_key(project_key),
+            work_item_type_key,
+        )
 
         resp = await self.client.get(url)
         resp.raise_for_status()
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取创建工作项元数据失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取创建工作项元数据失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取创建工作项元数据失败: {err_msg}")
 
         meta = data.get("data", {})

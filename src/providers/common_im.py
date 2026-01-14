@@ -1,6 +1,5 @@
 from src.providers.base import Provider
 from src.core.client import get_lark_client
-import lark_oapi as lark
 
 
 class IMProvider(Provider):

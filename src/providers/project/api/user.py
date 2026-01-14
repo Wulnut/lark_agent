@@ -52,8 +52,11 @@ class UserAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取团队成员失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取团队成员失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取团队成员失败: {err_msg}")
 
         members = data.get("data", [])
@@ -105,8 +108,11 @@ class UserAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("获取用户详情失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "获取用户详情失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"获取用户详情失败: {err_msg}")
 
         users = data.get("data", [])
@@ -146,8 +152,9 @@ class UserAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("搜索用户失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "搜索用户失败: err_code=%s, err_msg=%s", data.get("err_code"), err_msg
+            )
             raise Exception(f"搜索用户失败: {err_msg}")
 
         users = data.get("data", [])
@@ -189,8 +196,12 @@ class UserAPI:
             "page_size": page_size,
         }
 
-        logger.debug("Getting user group members: project_key=%s, group_type=%s, group_ids=%s",
-                    project_key, user_group_type, user_group_ids)
+        logger.debug(
+            "Getting user group members: project_key=%s, group_type=%s, group_ids=%s",
+            project_key,
+            user_group_type,
+            user_group_ids,
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
@@ -198,8 +209,11 @@ class UserAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("查询用户组成员失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "查询用户组成员失败: err_code=%s, err_msg=%s",
+                data.get("err_code"),
+                err_msg,
+            )
             raise Exception(f"查询用户组成员失败: {err_msg}")
 
         result = data.get("data", {})
@@ -229,8 +243,12 @@ class UserAPI:
         url = f"/open_api/{project_key}/user_group"
         payload = {"name": name, "users": users}
 
-        logger.info("Creating user group: project_key=%s, name=%s, users=%s",
-                   project_key, name, users)
+        logger.info(
+            "Creating user group: project_key=%s, name=%s, users=%s",
+            project_key,
+            name,
+            users,
+        )
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
@@ -238,8 +256,9 @@ class UserAPI:
 
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
-            logger.error("创建用户组失败: err_code=%s, err_msg=%s",
-                        data.get("err_code"), err_msg)
+            logger.error(
+                "创建用户组失败: err_code=%s, err_msg=%s", data.get("err_code"), err_msg
+            )
             raise Exception(f"创建用户组失败: {err_msg}")
 
         result = data.get("data", {})
