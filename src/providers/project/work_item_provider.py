@@ -1,10 +1,12 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
+from src.core.cache import SimpleCache
 from src.core.config import settings
 from src.providers.base import Provider
 from src.providers.project.api.work_item import WorkItemAPI
+from src.providers.project.api.user import UserAPI
 from src.providers.project.managers import MetadataManager
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,9 @@ class WorkItemProvider(Provider):
     - 使用 WorkItemAPI 执行原子操作
     - 支持从环境变量 FEISHU_PROJECT_KEY 读取默认项目
     """
+
+    # 类常量：缓存中"未找到"的标记值
+    _NOT_FOUND_MARKER: str = "__NOT_FOUND__"
 
     def __init__(
         self,
@@ -41,11 +46,18 @@ class WorkItemProvider(Provider):
         self._project_key = project_key
         self.work_item_type_name = work_item_type_name
         self.api = WorkItemAPI()
+        self.user_api = UserAPI()
         self.meta = MetadataManager.get_instance()
 
         # 线程安全：用于保护类型 Key 解析的锁和缓存
         self._type_key_lock = asyncio.Lock()
         self._resolved_type_key: Optional[str] = None
+
+        # 缓存配置
+        # 用户ID到姓名的缓存，TTL 10分钟（600秒）
+        self._user_cache = SimpleCache(ttl=600)
+        # 工作项ID到名称的缓存，TTL 5分钟（300秒）
+        self._work_item_cache = SimpleCache(ttl=300)
 
     async def _get_project_key(self) -> str:
         if not self._project_key:
@@ -299,11 +311,16 @@ class WorkItemProvider(Provider):
             val = await self.meta.get_option_value(
                 project_key, type_key, field_key, str(value)
             )
-            logger.info(f"Resolved option '{value}' -> '{val}' for field '{field_key}'")
+            logger.info(
+                "Resolved option '%s' -> '%s' for field '%s'", value, val, field_key
+            )
             return val
         except Exception as e:
             logger.warning(
-                f"Failed to resolve option '{value}' for field '{field_key}': {e}"
+                "Failed to resolve option '%s' for field '%s': %s",
+                value,
+                field_key,
+                e,
             )
             return value  # Fallback
 
@@ -329,7 +346,9 @@ class WorkItemProvider(Provider):
         project_key = await self._get_project_key()
         type_key = await self._get_type_key()
 
-        logger.info(f"Creating Issue in Project: {project_key}, Type: {type_key}")
+        logger.info(
+            "Creating Issue in Project: %s, Type: %s", project_key, type_key
+        )
 
         # 1. Prepare fields for creation (minimal set)
         create_fields = []
@@ -361,7 +380,7 @@ class WorkItemProvider(Provider):
                     project_key, type_key, field_key, priority
                 )
 
-                logger.info(f"Updating priority to {option_val}...")
+                logger.info("Updating priority to %s...", option_val)
                 await self.api.update(
                     project_key,
                     type_key,
@@ -369,11 +388,11 @@ class WorkItemProvider(Provider):
                     [{"field_key": field_key, "field_value": option_val}],
                 )
             except Exception as e:
-                logger.warning(f"Failed to update priority: {e}")
+                logger.warning("Failed to update priority: %s", e)
 
         return issue_id
 
-    async def get_issue_details(self, issue_id: int) -> Dict:
+    async def get_issue_details(self, issue_id: int) -> Dict[str, Any]:
         """获取 Issue 详情"""
         project_key = await self._get_project_key()
         type_key = await self._get_type_key()
@@ -382,6 +401,453 @@ class WorkItemProvider(Provider):
         if not items:
             raise Exception(f"Issue {issue_id} not found")
         return items[0]
+
+    async def _try_fetch_type(
+        self, project_key: str, type_key: str, work_item_ids: List[int]
+    ) -> List[Dict[str, Any]]:
+        """
+        尝试从指定类型中获取工作项
+
+        Args:
+            project_key: 项目 Key
+            type_key: 工作项类型 Key
+            work_item_ids: 工作项 ID 列表
+
+        Returns:
+            工作项列表，查询失败时返回空列表
+        """
+        try:
+            return await self.api.query(project_key, type_key, work_item_ids)
+        except Exception:
+            return []
+
+    async def _get_users_with_cache(self, user_keys: List[str]) -> Dict[str, str]:
+        """
+        通过缓存获取用户信息
+
+        Args:
+            user_keys: 用户Key列表
+
+        Returns:
+            用户Key到姓名的映射字典
+        """
+        user_map = {}
+        users_to_fetch = []
+
+        # 首先检查缓存
+        for user_key in user_keys:
+            cached_name = self._user_cache.get(user_key)
+            if cached_name is not None:
+                user_map[user_key] = cached_name
+            else:
+                users_to_fetch.append(user_key)
+
+        # 如果有未缓存的用户，批量查询
+        if users_to_fetch:
+            try:
+                users = await self.user_api.query_users(user_keys=users_to_fetch)
+                for user in users:
+                    user_key = user.get("user_key")
+                    user_name = user.get("name_cn") or user.get("name_en") or user_key
+                    if user_key:
+                        user_map[user_key] = user_name
+                        # 存入缓存
+                        self._user_cache.set(user_key, user_name)
+            except Exception as e:
+                logger.warning("Failed to fetch users: %s", e)
+                # 如果查询失败，将用户 Key 作为名称使用
+                for user_key in users_to_fetch:
+                    user_map[user_key] = user_key
+
+        return user_map
+
+    async def _get_work_items_with_cache(
+        self, work_item_ids: List[int], project_key: str, type_key: str
+    ) -> Tuple[Dict[int, str], List[int]]:
+        """
+        通过缓存获取工作项名称
+
+        Args:
+            work_item_ids: 工作项 ID 列表
+            project_key: 项目 Key
+            type_key: 工作项类型 Key
+
+        Returns:
+            (工作项 ID 到名称的映射字典, 未找到的 ID 列表)
+        """
+        work_item_map: Dict[int, str] = {}
+        items_to_fetch: List[int] = []
+
+        # 首先检查缓存
+        for item_id in work_item_ids:
+            cached_value = self._work_item_cache.get(str(item_id))
+            if cached_value is not None:
+                if cached_value != self._NOT_FOUND_MARKER:
+                    work_item_map[item_id] = cached_value
+                # 如果是 _NOT_FOUND_MARKER，则跳过，不添加到 items_to_fetch
+            else:
+                items_to_fetch.append(item_id)
+
+        # 如果有未缓存的工作项，批量查询当前类型
+        if items_to_fetch:
+            try:
+                items = await self.api.query(project_key, type_key, items_to_fetch)
+                found_ids: Set[int] = set()
+                for item in items:
+                    item_id = item.get("id")
+                    item_name = item.get("name") or ""
+                    if item_id:
+                        work_item_map[item_id] = item_name
+                        # 存入缓存
+                        self._work_item_cache.set(str(item_id), item_name)
+                        found_ids.add(item_id)
+
+                # 计算未找到的 ID，并缓存"未找到"标记
+                not_found_ids = [
+                    item_id for item_id in items_to_fetch if item_id not in found_ids
+                ]
+                for item_id in not_found_ids:
+                    self._work_item_cache.set(str(item_id), self._NOT_FOUND_MARKER)
+
+            except Exception as e:
+                logger.debug("Failed to fetch work items in current type: %s", e)
+                # 如果查询失败，所有待查询的 ID 都视为未找到
+                not_found_ids = items_to_fetch
+                # 不缓存失败结果，因为可能是临时错误
+        else:
+            not_found_ids = []
+
+        return work_item_map, not_found_ids
+
+    async def get_readable_issue_details(self, issue_id: int) -> Dict[str, Any]:
+        """
+        获取 Issue 详情，并将用户相关字段转换为人名以提高可读性
+
+        Args:
+            issue_id: Issue ID
+
+        Returns:
+            增强后的 Issue 详情，包含原始数据和可读字段
+        """
+        item = await self.get_issue_details(issue_id)
+        return await self._enhance_work_item_with_readable_names(item)
+
+    async def _enhance_work_item_with_readable_names(
+        self, item: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        增强工作项数据，将字段 Key 和 ID 转换为可读名称
+
+        Args:
+            item: 原始工作项字典
+
+        Returns:
+            增强后的工作项字典，包含 readable_fields 字段
+        """
+        if not item:
+            return item
+
+        # 创建副本，避免修改原始数据
+        enhanced = item.copy()
+
+        # 获取项目和类型 Key
+        project_key = item.get("project_key") or await self._get_project_key()
+        type_key = item.get("work_item_type_key") or await self._get_type_key()
+
+        # 获取字段定义映射 (Name -> Key)
+        try:
+            fields_map = await self.meta.list_fields(project_key, type_key)
+            # 反转映射 (Key -> Name)
+            # 注意: 如果有多个名称映射到同一个 Key (别名)，会随机保留一个
+            key_to_name = {v: k for k, v in fields_map.items()}
+        except Exception as e:
+            logger.warning("Failed to load field definitions: %s", e)
+            key_to_name = {}
+
+        # 准备收集 ID 的容器
+        users_to_fetch = set()
+        work_items_to_fetch = set()
+
+        # 统一处理 fields (新版) 和 field_value_pairs (旧版)
+        fields = item.get("fields", [])
+        if not fields:
+            # 尝试转换旧版结构
+            field_value_pairs = item.get("field_value_pairs", [])
+            for pair in field_value_pairs:
+                fields.append(
+                    {
+                        "field_key": pair.get("field_key"),
+                        "field_value": pair.get("field_value"),
+                        # 旧版可能没有 type_key，后续只能尽力猜测
+                        "field_type_key": "unknown",
+                    }
+                )
+
+        # 第一遍遍历: 收集需要查询的 ID
+        for field in fields:
+            f_key = field.get("field_key")
+            f_val = field.get("field_value")
+            f_type = field.get("field_type_key", "")
+
+            if not f_val:
+                continue
+
+            # 用户相关字段
+            if f_type in ["user", "owner", "creator", "modifier"]:
+                if isinstance(f_val, str):
+                    users_to_fetch.add(f_val)
+            elif f_type in ["multi_user", "role_owners"]:
+                if isinstance(f_val, list):
+                    for u in f_val:
+                        if isinstance(u, str):
+                            users_to_fetch.add(u)
+            # 兼容 owner 字段 (可能不在 fields 中，而在根目录)
+            elif f_key == "owner" and isinstance(f_val, str):
+                users_to_fetch.add(f_val)
+
+            # 关联工作项字段
+            if f_type in ["work_item_related_select", "work_item_related_multi_select"]:
+                if isinstance(f_val, list):
+                    for wid in f_val:
+                        if isinstance(wid, (int, str)) and str(wid).isdigit():
+                            work_items_to_fetch.add(int(wid))
+                elif isinstance(f_val, (int, str)) and str(f_val).isdigit():
+                    work_items_to_fetch.add(int(f_val))
+
+        # 根目录的 owner, created_by, updated_by
+        for key in ["owner", "created_by", "updated_by"]:
+            val = item.get(key)
+            if val and isinstance(val, str):
+                users_to_fetch.add(val)
+
+        # 批量获取数据
+        user_map = {}
+        work_item_map = {}
+
+        if users_to_fetch:
+            # 使用缓存获取用户信息
+            user_map = await self._get_users_with_cache(list(users_to_fetch))
+
+        if work_items_to_fetch:
+            # 首先使用缓存获取当前类型中的工作项
+            cached_map, not_found_ids = await self._get_work_items_with_cache(
+                list(work_items_to_fetch), project_key, type_key
+            )
+            work_item_map.update(cached_map)
+            
+            # 如果有未找到的工作项，尝试其他所有类型
+            if not_found_ids:
+                remaining_ids = set(not_found_ids)
+
+                try:
+                    # 获取项目中所有可用类型
+                    try:
+                        all_types = await self.meta.list_types(project_key)
+                        target_types = {
+                            name: key
+                            for name, key in all_types.items()
+                            if key != type_key  # 排除当前类型
+                        }
+                    except Exception as e:
+                        logger.warning("Failed to list project types: %s", e)
+                        target_types = {}
+
+                    if target_types:
+                        # 限制并发数，避免触发 API 限流
+                        # 分批处理类型，每批 5 个
+                        type_items = list(target_types.items())
+                        batch_size = 5
+
+                        for i in range(0, len(type_items), batch_size):
+                            if not remaining_ids:
+                                break
+
+                            batch = type_items[i : i + batch_size]
+                            search_tasks = [
+                                self._try_fetch_type(
+                                    project_key, t_key, list(remaining_ids)
+                                )
+                                for _t_name, t_key in batch
+                            ]
+
+                            results = await asyncio.gather(*search_tasks)
+
+                            for items in results:
+                                for related_item in items:
+                                    related_id = related_item.get("id")
+                                    related_name = related_item.get("name") or ""
+                                    if related_id:
+                                        work_item_map[related_id] = related_name
+                                        # 存入缓存
+                                        self._work_item_cache.set(
+                                            str(related_id), related_name
+                                        )
+                                        remaining_ids.discard(related_id)
+
+                        # 缓存仍未找到的 ID（跨类型查询后）
+                        if remaining_ids:
+                            logger.debug(
+                                "Still not found after cross-type search: %s",
+                                remaining_ids,
+                            )
+                            for remaining_id in remaining_ids:
+                                self._work_item_cache.set(
+                                    str(remaining_id), self._NOT_FOUND_MARKER
+                                )
+
+                except Exception as e:
+                    logger.warning(
+                        "Failed to fetch related items from other types: %s", e
+                    )
+
+        # 第二遍遍历: 构建可读字段
+        readable_fields = {}
+
+        # 处理 fields 列表
+        for field in fields:
+            f_key = field.get("field_key")
+            f_val = field.get("field_value")
+            f_type = field.get("field_type_key", "")
+            f_alias = field.get("field_alias")
+
+            if f_key is None:
+                continue
+
+            # 确定字段名称 (优先用别名，其次查定义，最后用 key)
+            field_name = f_alias
+            if not field_name:
+                field_name = key_to_name.get(f_key, f_key)
+
+            # 确保是字符串
+            if field_name is None:
+                field_name = str(f_key) if f_key else "unknown"
+
+            readable_val = f_val
+
+            # 用户字段处理（根据类型或字段键判断）
+            user_field_keys = ["owner", "creator", "modifier", "assignee", "created_by", "updated_by"]
+            is_user_field = (
+                f_type in ["user", "owner", "creator", "modifier"] or
+                (f_type == "unknown" and f_key in user_field_keys)
+            )
+            
+            # 转换值
+            if f_val is not None:
+                if is_user_field:
+                    if isinstance(f_val, str):
+                        readable_val = user_map.get(f_val, f_val)
+                    else:
+                        # 使用提取方法处理非字符串值（如字典或列表）
+                        readable_val = self._extract_readable_field_value(f_val)
+                elif f_type in ["multi_user", "role_owners"]:
+                    if isinstance(f_val, list):
+                        new_list = []
+                        for u in f_val:
+                            if isinstance(u, str):
+                                new_list.append(user_map.get(u, u))
+                            else:
+                                new_list.append(self._extract_readable_field_value(u))
+                        readable_val = new_list
+                # 关联工作项
+                elif f_type in [
+                    "work_item_related_select",
+                    "work_item_related_multi_select",
+                ]:
+                    if isinstance(f_val, list):
+                        new_list = []
+                        for wid in f_val:
+                            if isinstance(wid, (int, str)) and str(wid).isdigit():
+                                new_list.append(work_item_map.get(int(wid), wid))
+                            else:
+                                new_list.append(wid)
+                        readable_val = new_list
+                    elif isinstance(f_val, (int, str)) and str(f_val).isdigit():
+                        readable_val = work_item_map.get(int(f_val), f_val)
+                # 选项 (Select / MultiSelect)
+                elif isinstance(f_val, dict) and ("label" in f_val or "name" in f_val):
+                    readable_val = f_val.get("label") or f_val.get("name")
+                elif isinstance(f_val, list) and f_val and isinstance(f_val[0], dict):
+                    # MultiSelect 通常返回包含 label/value 的字典列表
+                    # 如果是用户字段（已在上面处理过），跳过此处理
+                    if not is_user_field:
+                        new_list = []
+                        for item in f_val:
+                            if isinstance(item, dict):
+                                new_list.append(
+                                    item.get("label") or item.get("name") or item
+                                )
+                            else:
+                                new_list.append(item)
+                        readable_val = new_list
+
+            readable_fields[field_name] = readable_val
+
+        # 处理根目录特殊字段
+        for key in ["owner", "created_by", "updated_by"]:
+            val = item.get(key)
+            if val and isinstance(val, str):
+                readable_fields[key] = user_map.get(val, val)
+
+        enhanced["readable_fields"] = readable_fields
+
+        # 为常用字段添加顶级可读别名
+        common_fields = ["owner", "creator", "updater", "assignee"]
+        for field in common_fields:
+            if field in readable_fields:
+                enhanced[f"readable_{field}"] = readable_fields[field]
+
+        return enhanced
+
+    def _extract_readable_field_value(self, field_value: Any) -> Any:
+        """
+        提取可读的字段值，特别处理用户相关字段
+        
+        Args:
+            field_value: 原始字段值
+            
+        Returns:
+            可读的字段值，如果无法提取则返回原始值
+        """
+        if field_value is None:
+            return None
+            
+        # 如果是字典且包含 label 或 name 字段，优先返回这些
+        if isinstance(field_value, dict):
+            if "label" in field_value:
+                return field_value["label"]
+            if "name" in field_value:
+                return field_value["name"]
+            if "name_cn" in field_value:
+                return field_value["name_cn"]
+            # 如果字典中没有可读字段，返回整个字典（可能是复杂对象）
+            return field_value
+            
+        # 如果是列表，处理每个元素
+        if isinstance(field_value, list):
+            # 空列表返回空列表
+            if not field_value:
+                return field_value
+                
+            # 单元素列表且元素是字典：尝试提取可读值
+            if len(field_value) == 1 and isinstance(field_value[0], dict):
+                single_item = field_value[0]
+                # 尝试提取 name, name_cn, label
+                for key in ["name", "name_cn", "label"]:
+                    if key in single_item:
+                        return single_item[key]
+                # 如果没有可读键，返回整个字典
+                return single_item
+            
+            # 多元素列表：处理每个元素
+            readable_items = []
+            for item in field_value:
+                readable_item = self._extract_readable_field_value(item)
+                if readable_item is not None:
+                    readable_items.append(readable_item)
+            return readable_items if readable_items else field_value
+            
+        # 其他类型直接返回
+        return field_value
 
     async def update_issue(
         self,
@@ -437,7 +903,9 @@ class WorkItemProvider(Provider):
 
         if update_fields:
             await self.api.update(project_key, type_key, issue_id, update_fields)
-            logger.info(f"Updated Issue {issue_id} with {len(update_fields)} fields")
+            logger.info(
+                "Updated Issue %d with %d fields", issue_id, len(update_fields)
+            )
 
     async def delete_issue(self, issue_id: int) -> None:
         """删除 Issue"""
@@ -500,7 +968,7 @@ class WorkItemProvider(Provider):
                         )
                         resolved_values.append(val)
                     except Exception as e:
-                        logger.warning(f"Failed to resolve status '{s}': {e}")
+                        logger.warning("Failed to resolve status '%s': %s", s, e)
                         resolved_values.append(s)
 
                 conditions.append(
@@ -527,7 +995,7 @@ class WorkItemProvider(Provider):
                         )
                         resolved_values.append(val)
                     except Exception as e:
-                        logger.warning(f"Failed to resolve priority '{p}': {e}")
+                        logger.warning("Failed to resolve priority '%s': %s", p, e)
                         resolved_values.append(p)
 
                 conditions.append(
@@ -553,13 +1021,15 @@ class WorkItemProvider(Provider):
                 )
             except Exception as e:
                 logger.warning(
-                    f"Failed to resolve owner '{owner}': {e}, skipping owner filter"
+                    "Failed to resolve owner '%s': %s, skipping owner filter",
+                    owner,
+                    e,
                 )
 
         # 构建 search_group
         search_group = {"conjunction": "AND", "conditions": conditions}
 
-        logger.info(f"Filtering issues with conditions: {conditions}")
+        logger.info("Filtering issues with conditions: %s", conditions)
 
         # 调用 API
         result = await self.api.search_params(
@@ -697,7 +1167,7 @@ class WorkItemProvider(Provider):
                     page_num = current_page + i
                     
                     if isinstance(result, Exception):
-                        logger.error(f"Failed to fetch page {page_num}: {result}")
+                        logger.error("Failed to fetch page %d: %s", page_num, result)
                         continue
 
                     # 标准化返回结果
@@ -776,7 +1246,7 @@ class WorkItemProvider(Provider):
         # 如果提供了 name_keyword，优先使用 filter API（更高效）
         # filter API 支持 work_item_name 和 work_item_status，但不支持 priority/owner/related_to
         if name_keyword:
-            logger.info(f"Using filter API for name keyword search: '{name_keyword}'")
+            logger.info("Using filter API for name keyword search: '%s'", name_keyword)
 
             # 准备 filter API 参数
             filter_kwargs = {}
@@ -798,14 +1268,14 @@ class WorkItemProvider(Provider):
                             )
                             resolved_statuses.append(val)
                         except Exception as e:
-                            logger.warning(f"Failed to resolve status '{s}': {e}")
+                            logger.warning("Failed to resolve status '%s': %s", s, e)
                     if resolved_statuses:
                         filter_kwargs["work_item_status"] = resolved_statuses
                         logger.info(
-                            f"Added status filter to filter API: {resolved_statuses}"
+                            "Added status filter to filter API: %s", resolved_statuses
                         )
                 except Exception as e:
-                    logger.warning(f"Status field not available for filter API: {e}")
+                    logger.warning("Status field not available for filter API: %s", e)
 
             # filter API 不支持 priority、owner 和 related_to，记录警告
             if priority:
@@ -883,9 +1353,8 @@ class WorkItemProvider(Provider):
                                 if owner.lower() not in (item_owner_key or "").lower():
                                     continue
                         except Exception as e:
-                            logger.debug(f"Failed to filter by owner '{owner}': {e}")
+                            logger.debug("Failed to filter by owner '%s': %s", owner, e)
                             # 如果无法解析 owner，跳过该过滤条件
-                            pass
 
                     # 检查关联工作项
                     if related_to:
@@ -941,7 +1410,7 @@ class WorkItemProvider(Provider):
                         )
                         resolved_values.append(val)
                     except Exception as e:
-                        logger.warning(f"Failed to resolve status '{s}': {e}")
+                        logger.warning("Failed to resolve status '%s': %s", s, e)
                         resolved_values.append(s)
 
                 conditions.append(
@@ -951,7 +1420,7 @@ class WorkItemProvider(Provider):
                         "value": resolved_values,
                     }
                 )
-                logger.info(f"Added status filter: {status}")
+                logger.info("Added status filter: %s", status)
             else:
                 logger.warning(
                     "Field 'status' not found in project, skipping status filter"
@@ -971,7 +1440,7 @@ class WorkItemProvider(Provider):
                         )
                         resolved_values.append(val)
                     except Exception as e:
-                        logger.warning(f"Failed to resolve priority '{p}': {e}")
+                        logger.warning("Failed to resolve priority '%s': %s", p, e)
                         resolved_values.append(p)
 
                 conditions.append(
@@ -981,7 +1450,7 @@ class WorkItemProvider(Provider):
                         "value": resolved_values,
                     }
                 )
-                logger.info(f"Added priority filter: {priority}")
+                logger.info("Added priority filter: %s", priority)
             else:
                 logger.warning(
                     "Field 'priority' not found in project, skipping priority filter"
@@ -998,10 +1467,10 @@ class WorkItemProvider(Provider):
                         "value": [user_key],
                     }
                 )
-                logger.info(f"Added owner filter: {owner}")
+                logger.info("Added owner filter: %s", owner)
             except Exception as e:
                 logger.warning(
-                    f"Failed to resolve owner '{owner}': {e}, skipping owner filter"
+                    "Failed to resolve owner '%s': %s, skipping owner filter", owner, e
                 )
 
         # 构建 search_group
@@ -1035,13 +1504,13 @@ class WorkItemProvider(Provider):
             pagination = result.get("pagination", {})
 
         logger.info(
-            f"Retrieved {len(items)} items (total: {pagination.get('total', 0)})"
+            "Retrieved %d items (total: %d)", len(items), pagination.get("total", 0)
         )
 
         # 如果指定了 related_to，进行客户端过滤
         # search_params API 不支持关联字段过滤
         if related_to:
-            logger.info(f"Applying client-side related_to filter: {related_to}")
+            logger.info("Applying client-side related_to filter: %s", related_to)
             filtered_items = []
             for item in items:
                 is_related = False
@@ -1088,3 +1557,58 @@ class WorkItemProvider(Provider):
         type_key = await self._get_type_key()
         field_key = await self.meta.get_field_key(project_key, type_key, field_name)
         return await self.meta.list_options(project_key, type_key, field_key)
+
+    def clear_user_cache(self) -> None:
+        """
+        清理用户缓存
+        
+        当用户信息发生变化时调用此方法
+        """
+        self._user_cache.clear()
+        logger.info("Cleared user cache")
+
+    def clear_work_item_cache(self) -> None:
+        """
+        清理工作项缓存
+        
+        当工作项信息发生变化时调用此方法
+        """
+        self._work_item_cache.clear()
+        logger.info("Cleared work item cache")
+
+    def clear_all_caches(self) -> None:
+        """
+        清理所有缓存
+        """
+        self._user_cache.clear()
+        self._work_item_cache.clear()
+        logger.info("Cleared all caches (user + work_item)")
+
+    def invalidate_work_item_cache(self, work_item_id: int) -> None:
+        """
+        使特定工作项的缓存失效
+
+        当工作项更新时调用此方法
+
+        Args:
+            work_item_id: 工作项 ID
+        """
+        key = str(work_item_id)
+        if self._work_item_cache.delete(key):
+            logger.info("Invalidated work item cache for ID: %d", work_item_id)
+        else:
+            logger.debug("Work item cache not found for ID: %d", work_item_id)
+
+    def invalidate_user_cache(self, user_key: str) -> None:
+        """
+        使特定用户的缓存失效
+
+        当用户信息更新时调用此方法
+
+        Args:
+            user_key: 用户 Key
+        """
+        if self._user_cache.delete(user_key):
+            logger.info("Invalidated user cache for key: %s", user_key)
+        else:
+            logger.debug("User cache not found for key: %s", user_key)

@@ -21,8 +21,9 @@ class TestMCPTools:
             mock_instance = MagicMock()
             # 设置异步方法
             mock_instance.create_issue = AsyncMock()
+            mock_instance.get_issue_details = AsyncMock()
+            mock_instance.get_readable_issue_details = AsyncMock()
             mock_instance.get_tasks = AsyncMock()
-            mock_instance.filter_issues = AsyncMock()
             mock_instance.update_issue = AsyncMock()
             mock_instance.list_available_options = AsyncMock()
             mock_instance.resolve_related_to = AsyncMock()
@@ -142,63 +143,66 @@ class TestMCPTools:
         assert "系统内部错误" in result
 
     # =========================================================================
-    # filter_tasks 测试 (返回 JSON)
+    # get_task_detail 测试 (返回 JSON)
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_filter_tasks_success(self, mock_provider):
-        """测试过滤任务成功 - 验证 JSON 结构和参数解析"""
-        from src.mcp_server import filter_tasks
+    async def test_get_task_detail_success(self, mock_provider):
+        """测试获取工作项详情成功 - 验证 JSON 结构"""
+        from src.mcp_server import get_task_detail
 
-        mock_provider.filter_issues.return_value = {
-            "items": [{"id": 1, "name": "P0 Task", "field_value_pairs": []}],
-            "total": 1,
-            "page_num": 1,
-            "page_size": 20,
+        mock_provider.get_readable_issue_details.return_value = {
+            "id": 12345,
+            "name": "Test Issue",
+            "status": "进行中",
+            "priority": "P0",
+            "owner": "张三",
+            "description": "这是一个测试工作项",
+            "readable_fields": {
+                "owner": "张三",
+                "status": "进行中",
+                "priority": "P0"
+            }
         }
 
-        result = await filter_tasks(
-            project="proj_xxx",
-            status="进行中",
-            priority="P0,P1",
-            page_num=1,
-            page_size=20,
-        )
+        result = await get_task_detail(issue_id=12345, project="proj_xxx")
 
         # 解析 JSON 并验证结构
         data = json.loads(result)
-        assert isinstance(data, dict)
-        assert data["total"] == 1
-        assert len(data["items"]) == 1
-        assert data["items"][0]["id"] == 1
+        assert isinstance(data, dict), "返回值应为 JSON 对象"
+        assert data["id"] == 12345
+        assert data["name"] == "Test Issue"
+        assert data["status"] == "进行中"
+        assert data["priority"] == "P0"
 
-        # 验证参数解析（逗号分隔 -> 列表）
-        mock_provider.filter_issues.assert_awaited_once()
-        call_kwargs = mock_provider.filter_issues.call_args.kwargs
-        assert call_kwargs["status"] == ["进行中"]
-        assert call_kwargs["priority"] == ["P0", "P1"]
+        mock_provider.get_readable_issue_details.assert_awaited_once_with(12345)
 
     @pytest.mark.asyncio
-    async def test_filter_tasks_no_conditions(self, mock_provider):
-        """测试无过滤条件 - 验证空结果 JSON"""
-        from src.mcp_server import filter_tasks
+    async def test_get_task_detail_not_found(self, mock_provider):
+        """测试工作项不存在 - 验证错误信息"""
+        from src.mcp_server import get_task_detail
 
-        mock_provider.filter_issues.return_value = {
-            "items": [],
-            "total": 0,
-            "page_num": 1,
-            "page_size": 20,
-        }
+        # 使用包含业务错误关键词的消息，确保被透传
+        mock_provider.get_readable_issue_details.side_effect = Exception(
+            "工作项 99999 不存在"
+        )
 
-        result = await filter_tasks(project="proj_xxx")
+        result = await get_task_detail(issue_id=99999, project="proj_xxx")
 
-        data = json.loads(result)
-        assert data["total"] == 0
-        assert data["items"] == []
+        # 验证错误信息被传递
+        assert "不存在" in result
 
-        call_kwargs = mock_provider.filter_issues.call_args.kwargs
-        assert call_kwargs["status"] is None
-        assert call_kwargs["priority"] is None
+    @pytest.mark.asyncio
+    async def test_get_task_detail_error(self, mock_provider):
+        """测试获取详情失败 - 验证系统错误处理"""
+        from src.mcp_server import get_task_detail
+
+        mock_provider.get_readable_issue_details.side_effect = Exception("Network Error")
+
+        result = await get_task_detail(issue_id=12345, project="proj_xxx")
+
+        # 验证错误信息被传递
+        assert "系统内部错误" in result
 
     # =========================================================================
     # update_task 测试 (返回纯文本)

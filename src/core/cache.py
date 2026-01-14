@@ -44,6 +44,21 @@ class SimpleCache:
         logger.debug("Cache hit: key=%s", key)
         return item["value"]
 
+    def delete(self, key: str) -> bool:
+        """
+        删除特定键的缓存
+
+        Args:
+            key: 要删除的缓存键
+
+        Returns:
+            如果键存在并被删除则返回 True，否则返回 False
+        """
+        if self._cache.pop(key, None) is not None:
+            logger.debug("Cache deleted: key=%s", key)
+            return True
+        return False
+
     def clear(self):
         cache_size = len(self._cache)
         self._cache.clear()

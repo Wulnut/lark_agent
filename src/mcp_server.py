@@ -13,7 +13,7 @@ Description:
     - list_projects: 列出所有可用项目
     - create_task: 创建工作项
     - get_tasks: 获取工作项列表（支持全量或过滤）
-    - filter_tasks: 高级过滤查询
+    - get_task_detail: 获取单个工作项完整详情
     - update_task: 更新工作项
     - get_task_options: 获取字段可用选项
 
@@ -508,114 +508,73 @@ async def get_tasks(
 
 
 @mcp.tool()
-async def filter_tasks(
+async def get_task_detail(
+    issue_id: int,
     project: Optional[str] = None,
     work_item_type: Optional[str] = None,
-    status: Optional[str] = None,
-    priority: Optional[str] = None,
-    owner: Optional[str] = None,
-    page_num: int = 1,
-    page_size: int = 20,
 ) -> str:
     """
-    高级过滤查询工作项。
+    获取单个工作项的完整详情。
 
-    ⚠️ 注意: 此工具功能已被 get_tasks 完全覆盖，建议使用 get_tasks 替代。
-    保留此工具仅为向后兼容，未来版本可能移除。
-
-    支持按状态、优先级、负责人进行组合过滤。
-    字段值会自动转换为 API 所需的格式。
+    当你需要查看工作项的所有字段信息时使用此工具。
+    返回的详情包含所有可用字段（包括自定义字段）。
+    用户相关字段（如负责人、创建者等）会自动转换为人名以提高可读性。
 
     Args:
-        project: 项目标识符（可选）。可以是项目名称或 project_key。
+        issue_id: 工作项 ID，必填。
+        project: 项目标识符（可选）。可以是:
+                - 项目名称（如 "SR6D2VA-7552-Lark"）
+                - project_key（如 "project_xxx"）
                 如不指定，则使用环境变量 FEISHU_PROJECT_KEY 配置的默认项目。
         work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等。
                        如不指定，默认使用项目中的第一个可用类型。
-        status: 状态过滤（多个用逗号分隔），如 "待处理,进行中"。
-        priority: 优先级过滤（多个用逗号分隔），如 "P0,P1"。
-        owner: 负责人过滤（姓名或邮箱）。
-        page_num: 页码，从 1 开始。
-        page_size: 每页数量，默认 20，最大 100。
 
     Returns:
-        JSON 格式的过滤结果，包含:
-        - total: 符合条件的总数
-        - items: 工作项列表（简化格式）
+        JSON 格式的完整工作项详情。
         失败时返回错误信息。
 
     Examples:
-        # 查找所有 P0 优先级的待处理任务（使用默认项目）
-        filter_tasks(status="待处理", priority="P0")
+        # 获取工作项详情（使用默认项目）
+        get_task_detail(issue_id=12345)
 
-        # 查找张三负责的所有进行中任务
-        filter_tasks(status="进行中", owner="张三")
-
-        # 指定工作项类型过滤
-        filter_tasks(project="Project Management", work_item_type="需求管理", status="进行中")
+        # 指定项目和工作项类型
+        get_task_detail(
+            issue_id=12345,
+            project="SR6D2VA-7552-Lark",
+            work_item_type="Issue管理"
+        )
     """
     try:
         logger.info(
-            "Filtering tasks: project=%s, work_item_type=%s, status=%s, priority=%s, has_owner=%s, page=%d/%d",
+            "Getting task detail: project=%s, work_item_type=%s, issue_id=%d",
             _mask_project(project),
             work_item_type,
-            status,
-            priority,
-            bool(owner),
-            page_num,
-            page_size,
+            issue_id,
         )
         provider = _create_provider(project, work_item_type)
+        detail = await provider.get_readable_issue_details(issue_id)
 
-        # 解析逗号分隔的过滤条件
-        status_list = [s.strip() for s in status.split(",")] if status else None
-        priority_list = [p.strip() for p in priority.split(",")] if priority else None
-
-        result = await provider.filter_issues(
-            status=status_list,
-            priority=priority_list,
-            owner=owner,
-            page_num=page_num,
-            page_size=min(page_size, 100),
-        )
-
-        # 简化返回结果
-        simplified_items = provider.simplify_work_items(result.get("items", []))
-
-        logger.info(
-            "Filtered %d tasks (total: %d)",
-            len(simplified_items),
-            result.get("total", 0),
-        )
-
-        return json.dumps(
-            {
-                "total": result.get("total", 0),
-                "page_num": result.get("page_num", page_num),
-                "page_size": result.get("page_size", page_size),
-                "items": simplified_items,
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        logger.info("Retrieved task detail successfully: issue_id=%d", issue_id)
+        return json.dumps(detail, ensure_ascii=False, indent=2)
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
-            "Failed to filter tasks: project=%s, error=%s",
-            _mask_project(project),
+            "Failed to get task detail: issue_id=%d, error=%s",
+            issue_id,
             e,
             exc_info=True,
         )
-        return f"过滤失败: {str(e)}"
+        return f"获取工作项详情失败: {str(e)}"
     except Exception as e:
         error_msg = _extract_safe_error_message(e)
         if _should_expose_error(error_msg):
-            return f"过滤失败: {_mask_sensitive_in_error(error_msg)}"
+            return f"获取工作项详情失败: {_mask_sensitive_in_error(error_msg)}"
         logger.critical(
-            "Unexpected error filtering tasks: project=%s, error=%s",
-            _mask_project(project),
+            "Unexpected error getting task detail: issue_id=%d, error=%s",
+            issue_id,
             e,
             exc_info=True,
         )
-        return "过滤失败: 系统内部错误"
+        return "获取工作项详情失败: 系统内部错误"
 
 
 @mcp.tool()

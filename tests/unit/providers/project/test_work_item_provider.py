@@ -556,3 +556,69 @@ class TestProviderPagination:
         assert result["total"] == 100
         assert result["page_num"] == 5
         assert result["page_size"] == 10
+
+
+@pytest.mark.asyncio
+async def test_get_readable_issue_details(mock_work_item_api, mock_metadata):
+    """测试获取可读的工作项详情（用户字段转换为人名）"""
+    mock_metadata.get_project_key.return_value = "proj_123"
+    mock_metadata.get_type_key.return_value = "type_issue"
+    # 模拟字段映射 - 使用英文字段名以匹配测试期望
+    mock_metadata.list_fields = AsyncMock(return_value={
+        "owner": "owner",
+        "status": "status",
+        "priority": "priority",
+        "creator": "creator"
+    })
+    
+    # 模拟 API 返回包含用户字段的工作项
+    mock_work_item_api.query = AsyncMock(return_value=[
+        {
+            "id": 1001,
+            "name": "Test Issue",
+            "field_value_pairs": [
+                {
+                    "field_key": "owner",
+                    "field_value": [
+                        {"name": "张三", "user_key": "user_123"}
+                    ]
+                },
+                {
+                    "field_key": "status",
+                    "field_value": {"label": "进行中", "value": "opt_in_progress"}
+                },
+                {
+                    "field_key": "priority",
+                    "field_value": {"label": "P0", "value": "opt_p0"}
+                },
+                {
+                    "field_key": "creator",
+                    "field_value": {"name": "李四", "user_key": "user_456"}
+                }
+            ]
+        }
+    ])
+    
+    provider = WorkItemProvider("My Project")
+    result = await provider.get_readable_issue_details(1001)
+    
+    # 验证基本字段
+    assert result["id"] == 1001
+    assert result["name"] == "Test Issue"
+    
+    # 验证可读字段存在
+    assert "readable_fields" in result
+    readable_fields = result["readable_fields"]
+    
+    # 验证用户字段转换为人名
+    assert readable_fields["owner"] == "张三"
+    assert readable_fields["creator"] == "李四"
+    assert readable_fields["status"] == "进行中"
+    assert readable_fields["priority"] == "P0"
+    
+    # 验证常用字段的顶级别名
+    assert result.get("readable_owner") == "张三"
+    assert result.get("readable_creator") == "李四"
+    
+    # 验证原始数据仍然存在
+    assert "field_value_pairs" in result

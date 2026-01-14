@@ -71,7 +71,26 @@
     - `test_get_active_issues`
     - `test_list_available_options`
     - `test_filter_issues_empty_conditions`
-- [x] **集成脚本**: `scripts/work_items/test_provider_stack.py` 验证了全链路逻辑。
+ - [x] **集成脚本**: `scripts/work_items/test_provider_stack.py` 验证了全链路逻辑。
+
+#### 7. 可读性增强 (2026-01-15 新增)
+- [x] **工作项详情工具**: 新增 `get_task_detail` MCP 工具，用于获取完整工作项详情。
+  - 自动转换用户字段为人名（负责人、创建者、更新者等）
+  - 提供 `readable_fields` 字段包含所有字段的可读版本
+  - 为常用字段提供顶级别名（`readable_owner`, `readable_creator`）
+- [x] **列表视图可读性**: 增强 `get_tasks` 的 `simplify_work_item` 方法。
+  - 用户相关字段显示为人名而非内部 ID
+  - 自动提取状态、优先级等字段的可读标签
+  - 返回简化格式以节省 Token 消耗
+- [x] **工具清理**: 移除已废弃的 `filter_tasks` 工具，其功能已被 `get_tasks` 完全覆盖。
+- [x] **文档更新**: 更新 README.md 添加可读性特性说明。
+
+#### 8. Stage 1 后续优化建议
+- [ ] **工具描述增强**: 为 MCP 工具添加更详细的描述和示例，帮助 AI 代理更好地理解工具用途
+- [ ] **集成测试完善**: 增加对可读性字段转换的集成测试
+- [ ] **字段类型扩展**: 考虑支持更多字段类型的可读性转换（日期格式化、枚举值映射等）
+- [ ] **性能优化**: 对关联查询的客户端过滤进行性能优化
+- [ ] **API 文档**: 提供更详细的外部 API 使用文档
 
 ---
 

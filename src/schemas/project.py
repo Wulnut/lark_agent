@@ -116,40 +116,8 @@ class CreateWorkItemInput(BaseModel):
     )
 
 
-class FilterWorkItemInput(BaseModel):
-    """
-    过滤工作项的输入参数
-
-    用于 MCP 工具 `filter_tasks` 的参数验证。
-    """
-
-    project_key: str = Field(
-        ...,
-        description="项目空间 Key",
-    )
-    status: Optional[List[str]] = Field(
-        default=None,
-        description="状态列表，如 ['待处理', '进行中']",
-    )
-    priority: Optional[List[str]] = Field(
-        default=None,
-        description="优先级列表，如 ['P0', 'P1']",
-    )
-    owner: Optional[str] = Field(
-        default=None,
-        description="负责人（姓名或邮箱）",
-    )
-    page_num: int = Field(
-        default=1,
-        description="页码（从 1 开始）",
-        ge=1,
-    )
-    page_size: int = Field(
-        default=20,
-        description="每页数量",
-        ge=1,
-        le=100,
-    )
+# FilterWorkItemInput 已移除，其功能已由 get_tasks 完全覆盖
+# 原 filter_tasks 工具已被废弃和删除
 
 
 class UpdateWorkItemInput(BaseModel):
