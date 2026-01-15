@@ -89,6 +89,7 @@ class ProjectClient:
             headers={"Content-Type": "application/json"},
             auth=ProjectAuth(),
             timeout=httpx.Timeout(30.0),  # 30秒超时
+            trust_env=False,  # 禁用环境变量代理，避免 socksio 依赖问题
         )
         logger.debug("ProjectClient initialized successfully")
 

@@ -55,7 +55,7 @@ class AuthManager:
 
         # 4. Fetch new token from API
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 url = f"{self.base_url}/open_api/authen/plugin_token"
                 payload = {
                     "plugin_id": settings.FEISHU_PROJECT_PLUGIN_ID,

@@ -13,8 +13,8 @@ Integration Test Configuration
 """
 
 import pytest
-from src.core.config import settings
 
+from src.core.config import settings
 
 # =============================================================================
 # Integration Test Constants
@@ -55,36 +55,42 @@ skip_without_credentials = pytest.mark.skipif(
 # =============================================================================
 # Fixtures
 # =============================================================================
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="function")
 def reset_singletons():
     """
     在每个测试后重置单例实例以避免事件循环问题。
 
     清理逻辑:
-    1. 优先尝试获取正在运行的事件循环
-    2. 如果没有运行中的循环，使用 asyncio.run() 同步执行
+    1. 测试前：强制重置单例引用，确保每个测试使用新的实例
+    2. 测试后：不关闭client，只重置单例引用，让下一个测试创建新的client
     3. 异常时记录警告日志，而非静默忽略
+
+    注意：不在teardown时关闭client，避免影响后续测试
     """
-    yield
-    # 重置 ProjectClient 单例
     import src.core.project_client as pc_module
 
-    if pc_module._project_client is not None:
+    # 测试前：强制重置单例引用，确保每个测试使用新的实例
+    # 如果存在旧的client且已关闭，先清理它
+    old_client = pc_module._project_client
+    if old_client is not None:
         try:
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(pc_module._project_client.close())
-            except RuntimeError:
-                # 没有运行中的循环，同步执行
-                asyncio.run(pc_module._project_client.close())
-        except Exception as e:
-            import logging
-
-            logging.getLogger(__name__).warning(f"关闭 ProjectClient 失败: {e}")
-        finally:
+            # 检查client是否已关闭
+            if hasattr(old_client, "client") and old_client.client.is_closed:
+                # client已关闭，直接重置引用
+                pc_module._project_client = None
+                old_client = None
+        except Exception:
+            # 如果检查失败，也重置引用
             pc_module._project_client = None
+            old_client = None
+    else:
+        pc_module._project_client = None
+
+    yield
+
+    # 测试后：只重置单例引用，不关闭client
+    # 这样可以避免影响后续测试，让每个测试都创建新的client
+    pc_module._project_client = None
 
 
 @pytest.fixture

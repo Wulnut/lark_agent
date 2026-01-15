@@ -7,8 +7,9 @@ MCP Server 工具测试
 """
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 
 class TestMCPTools:
@@ -27,9 +28,10 @@ class TestMCPTools:
             mock_instance.update_issue = AsyncMock()
             mock_instance.list_available_options = AsyncMock()
             mock_instance.resolve_related_to = AsyncMock()
-            # 设置同步方法
-            mock_instance.simplify_work_items = MagicMock(
-                side_effect=lambda items: [
+
+            # 设置异步方法
+            async def mock_simplify_work_items(items, field_mapping=None):
+                return [
                     {
                         "id": item.get("id"),
                         "name": item.get("name"),
@@ -39,6 +41,9 @@ class TestMCPTools:
                     }
                     for item in items
                 ]
+
+            mock_instance.simplify_work_items = AsyncMock(
+                side_effect=mock_simplify_work_items
             )
             mock_cls.return_value = mock_instance
             yield mock_instance
@@ -158,11 +163,7 @@ class TestMCPTools:
             "priority": "P0",
             "owner": "张三",
             "description": "这是一个测试工作项",
-            "readable_fields": {
-                "owner": "张三",
-                "status": "进行中",
-                "priority": "P0"
-            }
+            "readable_fields": {"owner": "张三", "status": "进行中", "priority": "P0"},
         }
 
         result = await get_task_detail(issue_id=12345, project="proj_xxx")
@@ -197,7 +198,9 @@ class TestMCPTools:
         """测试获取详情失败 - 验证系统错误处理"""
         from src.mcp_server import get_task_detail
 
-        mock_provider.get_readable_issue_details.side_effect = Exception("Network Error")
+        mock_provider.get_readable_issue_details.side_effect = Exception(
+            "Network Error"
+        )
 
         result = await get_task_detail(issue_id=12345, project="proj_xxx")
 
@@ -342,7 +345,8 @@ class TestHelperFunctions:
 
         assert provider._extract_field_value(item, "owner") == "张三"
 
-    def test_simplify_work_item(self, provider):
+    @pytest.mark.asyncio
+    async def test_simplify_work_item(self, provider):
         """测试简化工作项"""
         item = {
             "id": 12345,
@@ -363,7 +367,7 @@ class TestHelperFunctions:
             ],
         }
 
-        simplified = provider.simplify_work_item(item)
+        simplified = await provider.simplify_work_item(item)
 
         assert simplified["id"] == 12345
         assert simplified["name"] == "Test Task"
@@ -371,7 +375,8 @@ class TestHelperFunctions:
         assert simplified["priority"] == "P0"
         assert simplified["owner"] == "张三"
 
-    def test_simplify_work_items_batch(self, provider):
+    @pytest.mark.asyncio
+    async def test_simplify_work_items_batch(self, provider):
         """测试批量简化工作项"""
         items = [
             {
@@ -390,7 +395,7 @@ class TestHelperFunctions:
             },
         ]
 
-        simplified = provider.simplify_work_items(items)
+        simplified = await provider.simplify_work_items(items)
 
         assert len(simplified) == 2
         assert simplified[0]["id"] == 1

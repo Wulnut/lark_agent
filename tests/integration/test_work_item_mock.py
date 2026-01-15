@@ -133,10 +133,7 @@ async def provider(mock_settings, respx_mock):
     p = WorkItemProvider("Test Project")
     yield p
 
-    # Teardown: close client
-    if client_module._project_client:
-        await client_module._project_client.close()
-        client_module._project_client = None
+    # Teardown: 不需要手动关闭 client，reset_singletons fixture 会处理
 
 
 @pytest.mark.asyncio
