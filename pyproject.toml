@@ -1,10 +1,10 @@
 [project]
 name = "lark-agent"
-version = "0.1.0"
+version = "0.0.2"
 description = "Lark Agent using MCP - A Model Context Protocol server for Lark Project integration"
 requires-python = ">=3.11"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0"}
 authors = [
     {name = "liangyz", email = "carepdime@gmail.com"}
 ]
