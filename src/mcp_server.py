@@ -710,12 +710,22 @@ async def update_task(
     description: Optional[str] = None,
     status: Optional[str] = None,
     assignee: Optional[str] = None,
+    field_name: Optional[str] = None,
+    field_value: Optional[str] = None,
 ) -> str:
     """
     更新工作项的字段。
 
     可以同时更新多个字段，只需提供要更新的字段值即可。
     未提供的字段将保持不变。
+
+    支持两种更新方式：
+    1. 使用便捷参数更新常用字段（name, priority, description, status, assignee）
+    2. 使用 field_name + field_value 更新任意自定义字段
+
+    系统会自动处理：
+    - 字段名称到 field_key 的转换
+    - 选项类型字段的 label 到 value 的转换（如 "32 GB" -> 对应的选项值）
 
     Args:
         issue_id: 要更新的工作项 ID。
@@ -728,6 +738,10 @@ async def update_task(
         description: 新描述（可选）。
         status: 新状态（可选），如 "进行中", "已完成" 等。
         assignee: 新负责人（可选），姓名或邮箱。
+        field_name: 自定义字段名称（可选），如 "DDR 容量"、"芯片型号" 等。
+                   需要与 field_value 配合使用。
+        field_value: 自定义字段值（可选），如 "32 GB"、"MT7981" 等。
+                    对于选项类型字段，可以直接使用选项的显示名称（label）。
 
     Returns:
         成功时返回 "更新成功"。
@@ -740,12 +754,20 @@ async def update_task(
         # 提升任务优先级并更换负责人
         update_task(issue_id=12345, priority="P0", assignee="李四")
 
-        # 指定工作项类型更新
-        update_task(issue_id=12345, work_item_type="需求管理", status="已完成")
+        # 更新自定义字段（如 DDR 容量）
+        update_task(issue_id=12345, work_item_type="项目管理", field_name="DDR 容量", field_value="32 GB")
+
+        # 更新多个自定义字段（需要多次调用）
+        update_task(issue_id=12345, field_name="芯片型号", field_value="MT7981")
     """
     try:
+        # 构建 extra_fields
+        extra_fields = None
+        if field_name and field_value is not None:
+            extra_fields = {field_name: field_value}
+
         logger.info(
-            "Updating task: project=%s, work_item_type=%s, issue_id=%d, has_name=%s, priority=%s, status=%s, has_assignee=%s",
+            "Updating task: project=%s, work_item_type=%s, issue_id=%d, has_name=%s, priority=%s, status=%s, has_assignee=%s, extra_field=%s",
             _mask_project(project),
             work_item_type,
             issue_id,
@@ -753,6 +775,7 @@ async def update_task(
             priority,
             status,
             bool(assignee),
+            field_name,
         )
         provider = _create_provider(project, work_item_type)
         await provider.update_issue(
@@ -762,6 +785,7 @@ async def update_task(
             description=description,
             status=status,
             assignee=assignee,
+            extra_fields=extra_fields,
         )
         logger.info("Task updated successfully: issue_id=%d", issue_id)
         return f"更新成功，Issue ID: {issue_id}"
@@ -770,7 +794,7 @@ async def update_task(
             "Failed to update task: project=%s, issue_id=%d, error=%s",
             _mask_project(project),
             issue_id,
-            e,
+            str(e), # 只记录异常消息，不记录完整堆栈，或者确保 e 本身不包含敏感信息
             exc_info=True,
         )
         return f"更新失败: {str(e)}"
@@ -782,7 +806,7 @@ async def update_task(
             "Unexpected error updating task: project=%s, issue_id=%d, error=%s",
             _mask_project(project),
             issue_id,
-            e,
+            _extract_safe_error_message(e), # 使用安全的错误消息
             exc_info=True,
         )
         return "更新失败: 系统内部错误"

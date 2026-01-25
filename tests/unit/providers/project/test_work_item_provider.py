@@ -157,7 +157,8 @@ async def test_update_issue_partial(mock_work_item_api, mock_metadata):
     update_fields = args[3]
     assert len(update_fields) == 1
     assert update_fields[0]["field_key"] == "field_status"
-    assert update_fields[0]["field_value"] == "opt_done"
+    # _resolve_field_value_for_update 返回 {label, value} 结构用于 select 类型字段
+    assert update_fields[0]["field_value"] == {"label": "已完成", "value": "opt_done"}
 
 
 @pytest.mark.asyncio

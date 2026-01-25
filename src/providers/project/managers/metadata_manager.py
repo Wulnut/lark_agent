@@ -598,6 +598,71 @@ class MetadataManager:
 
     # ========== L4: Option ==========
 
+    def _fuzzy_match_option(
+        self, target_label: str, option_map: Dict[str, str]
+    ) -> Optional[str]:
+        """
+        模糊匹配选项（通用逻辑）
+
+        策略:
+        1. 归一化完全匹配: 去除空格、转小写后比较
+           - "32 GB" == "32gb"
+        2. 单位自动补全: 识别 g/m/t/k 结尾，尝试补全为 gb/mb/tb/kb
+           - "32g" -> "32gb"
+           - "1.5t" -> "1.5tb"
+        3. 唯一包含匹配: 如果输入仅被唯一一个选项包含，则视为匹配
+           - "32" -> "32 GB" (如果没有 32 MB)
+
+        Args:
+            target_label: 目标标签（用户输入）
+            option_map: 选项映射 {label: value}
+
+        Returns:
+            匹配到的 option value，未匹配到返回 None
+        """
+        if not target_label:
+            return None
+
+        target_norm = target_label.lower().replace(" ", "")
+
+        # 1. 归一化完全匹配
+        for label, value in option_map.items():
+            label_norm = label.lower().replace(" ", "")
+            if target_norm == label_norm:
+                logger.info(f"Fuzzy match (normalized): '{target_label}' -> '{label}'")
+                return value
+
+        # 2. 单位自动补全 (针对存储/流量等带单位场景)
+        # 检查是否以单字母单位结尾 (g, m, k, t, p)
+        if target_norm and target_norm[-1] in "gmktp":
+            target_with_b = target_norm + "b"
+            for label, value in option_map.items():
+                label_norm = label.lower().replace(" ", "")
+                if target_with_b == label_norm:
+                    logger.info(f"Fuzzy match (unit fix): '{target_label}' -> '{label}'")
+                    return value
+
+        # 3. 唯一包含匹配
+        candidates = []
+        for label, value in option_map.items():
+            label_norm = label.lower().replace(" ", "")
+            # 检查 target 是否是 label 的子串
+            if target_norm in label_norm:
+                candidates.append((label, value))
+
+        if len(candidates) == 1:
+            matched_label, matched_value = candidates[0]
+            logger.info(
+                f"Fuzzy match (unique substring): '{target_label}' -> '{matched_label}'"
+            )
+            return matched_value
+        elif len(candidates) > 1:
+            logger.warning(
+                f"Ambiguous fuzzy match for '{target_label}': {[c[0] for c in candidates]}"
+            )
+
+        return None
+
     async def get_option_value(
         self, project_key: str, type_key: str, field_key: str, option_label: str
     ) -> str:
@@ -619,7 +684,9 @@ class MetadataManager:
         await self._ensure_field_cache(project_key, type_key)
 
         option_map = (
-            self._option_cache.get(project_key, {}).get(type_key, {}).get(field_key, {})
+            self._option_cache.get(project_key, {})
+            .get(type_key, {})
+            .get(field_key, {})
         )
 
         # 1. 精确匹配标签
@@ -630,6 +697,11 @@ class MetadataManager:
         # 2. 检查是否本身就是 Value
         if option_label in option_map.values():
             return option_label
+
+        # 3. 模糊匹配 (新增)
+        fuzzy_value = self._fuzzy_match_option(option_label, option_map)
+        if fuzzy_value:
+            return fuzzy_value
 
         available_options = list(option_map.keys())
         raise Exception(f"选项 '{option_label}' 未找到。可用选项: {available_options}")

@@ -234,6 +234,7 @@ class TestMCPTools:
             description=None,
             status="已完成",
             assignee=None,
+            extra_fields=None,
         )
 
     @pytest.mark.asyncio
