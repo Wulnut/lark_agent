@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_priority_extraction():
     """测试优先级字段提取"""
@@ -91,6 +92,7 @@ async def test_priority_extraction():
     print(f"测试提取优先级(旧格式): {priority_value2} (期望: 'P1')")
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_search_params_structure():
     """测试search_params API调用结构"""

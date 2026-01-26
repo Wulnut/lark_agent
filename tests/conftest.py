@@ -88,3 +88,22 @@ def log_test_start(request):
     yield
     logger.info("完成测试: %s", request.node.name)
     logger.info("=" * 80)
+
+
+@pytest.fixture(autouse=True)
+def mock_settings_env(request, monkeypatch):
+    """
+    自动 mock 环境变量，防止测试期间发起真实的鉴权请求。
+    
+    注意：标记为 @pytest.mark.integration 的测试会跳过此 mock，
+    以便使用真实凭据进行集成测试。
+    """
+    # 跳过集成测试
+    if request.node.get_closest_marker("integration"):
+        return
+    
+    from src.core.config import settings
+    # 设置静态 token，AuthManager 会优先使用它从而跳过 plugin_token 请求
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_USER_TOKEN", "mock_static_token_for_tests")
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_PLUGIN_ID", "mock_plugin_id")
+    monkeypatch.setattr(settings, "FEISHU_PROJECT_PLUGIN_SECRET", "mock_plugin_secret")

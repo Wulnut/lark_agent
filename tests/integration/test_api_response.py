@@ -10,6 +10,7 @@ from src.providers.project.work_item_provider import WorkItemProvider
 from src.core.project_client import get_project_client
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_api_response():
     """测试API响应格式"""

@@ -1,5 +1,5 @@
 import pytest
-from main import mcp
+from src.mcp_server import mcp
 
 
 def test_mcp_tool_registration():

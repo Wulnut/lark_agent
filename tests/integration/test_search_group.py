@@ -8,6 +8,7 @@ import pytest
 from src.providers.project.work_item_provider import WorkItemProvider
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_search_group_structure():
     """测试search_group结构"""
