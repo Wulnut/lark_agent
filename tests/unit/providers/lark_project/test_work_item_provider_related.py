@@ -1,15 +1,15 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 
 @pytest.fixture
 def mock_work_item_api():
-    with patch("src.providers.project.work_item_provider.WorkItemAPI") as mock_cls:
+    with patch("src.providers.lark_project.work_item_provider.WorkItemAPI") as mock_cls:
         yield mock_cls.return_value
 
 @pytest.fixture
 def mock_metadata():
-    with patch("src.providers.project.work_item_provider.MetadataManager") as mock_cls:
+    with patch("src.providers.lark_project.work_item_provider.MetadataManager") as mock_cls:
         mock_instance = AsyncMock()
         mock_cls.get_instance.return_value = mock_instance
         yield mock_instance

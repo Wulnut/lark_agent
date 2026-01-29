@@ -1,15 +1,27 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+import random
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, NamedTuple
+
+import httpx
 
 from src.core.cache import SimpleCache
 from src.core.config import settings
 from src.providers.base import Provider
-from src.providers.project.api.work_item import WorkItemAPI
-from src.providers.project.api.user import UserAPI
-from src.providers.project.managers import MetadataManager
+from src.providers.lark_project.api.work_item import WorkItemAPI
+from src.providers.lark_project.api.user import UserAPI
+from src.providers.lark_project.managers import MetadataManager
 
 logger = logging.getLogger(__name__)
+
+
+# 定义一个 NamedTuple 来存储每个更新操作的结果
+class UpdateResult(NamedTuple):
+    success: bool
+    issue_id: int
+    field_name: str
+    message: str
+    field_value: Any = None  # 添加 field_value 字段，用于记录尝试更新的值
 
 
 class WorkItemProvider(Provider):
@@ -58,6 +70,9 @@ class WorkItemProvider(Provider):
         self._user_cache = SimpleCache(ttl=600)
         # 工作项ID到名称的缓存，TTL 5分钟（300秒）
         self._work_item_cache = SimpleCache(ttl=300)
+
+        # 限制并发 API 请求数量，防止触发 429 频控 (15 QPS 限制)
+        self._api_semaphore = asyncio.Semaphore(2)
 
     async def _get_project_key(self) -> str:
         if not self._project_key:
@@ -248,7 +263,7 @@ class WorkItemProvider(Provider):
         priority_raw = self._extract_field_value(item, priority_key)
         # 脱敏处理：只记录优先级的前几个字符，或者不记录具体的敏感值
         if priority_raw:
-             priority_value = priority_raw[:20] # 截断
+            priority_value = priority_raw[:20]  # 截断
 
         logger.info(
             "simplify_work_item: item id=%s, keys=%s, field_mapping=%s, priority_key=%s, priority_value=%s",
@@ -512,7 +527,10 @@ class WorkItemProvider(Provider):
                 project_key, type_key, field_key, str(value)
             )
             logger.info(
-                "Resolved option '%s' -> '%s' for field '%s'", value, option_value, field_key
+                "Resolved option '%s' -> '%s' for field '%s'",
+                value,
+                option_value,
+                field_key,
             )
             return option_value
         except Exception as e:
@@ -527,21 +545,60 @@ class WorkItemProvider(Provider):
     async def _resolve_field_value_for_update(
         self, project_key: str, type_key: str, field_key: str, value: Any
     ) -> Any:
-        """解析字段值用于更新 API：转换为 {label, value} 结构
+        """解析字段值用于更新 API：转换为 {label, value} 结构"""
+        # 特殊处理：针对 multi_select 字段，如果值为空（None 或空字符串），返回空列表 []
+        # 这允许通过 API 清空多选字段，同时也避免了对 "" 进行选项查询导致的报错
+        try:
+            field_type = await self.meta.get_field_type(project_key, type_key, field_key)
+            if field_type == "multi_select" and (value is None or (isinstance(value, str) and not value.strip())):
+                logger.info("Empty value for multi_select field '%s', returning []", field_key)
+                return []
+        except Exception as e:
+            logger.debug("Failed to get field type in _resolve_field_value_for_update: %s", e)
 
-        飞书项目 API 更新 select 类型字段时，需要传递 {"label": "xxx", "value": "xxx"} 结构，
-        而非单纯的 value 字符串。
+        # 处理列表 (多选)
+        if isinstance(value, list):
+            results = []
+            for item in value:
+                # 递归调用处理单个值
+                resolved_item = await self._resolve_field_value_for_update(
+                    project_key, type_key, field_key, item
+                )
+                results.append(resolved_item)
+            return results
 
-        Args:
-            project_key: 项目空间 Key
-            type_key: 工作项类型 Key
-            field_key: 字段 Key
-            value: 输入值（可以是 label 或 value）
+        # 处理带分隔符的字符串 (伪多选支持 "A / B", "A, B", "A; B")
+        if isinstance(value, str) and any(sep in value for sep in [" / ", ",", ";", "|"]):
+            # 策略：先尝试不拆分直接匹配（可能是一个带逗号的单选项标签）
+            try:
+                # 尝试直接获取，不抛出异常
+                option_map = self.meta._option_cache.get(project_key, {}).get(type_key, {}).get(field_key, {})
+                if value in option_map or self.meta._fuzzy_match_option(value, option_map):
+                    # 匹配成功，说明是一个整体，跳过拆分逻辑
+                    pass
+                else:
+                    # 匹配失败，尝试多种分隔符拆分
+                    parts = []
+                    if " / " in value:
+                        parts = [p.strip() for p in value.split(" / ") if p.strip()]
+                    else:
+                        for sep in [",", ";", "|"]:
+                            if sep in value:
+                                parts = [p.strip() for p in value.split(sep) if p.strip()]
+                                break
 
-        Returns:
-            对于 select 类型: {"label": "xxx", "value": "xxx"}
-            对于其他类型: 原值
-        """
+                    if len(parts) > 1:
+                        logger.info(
+                            "Detected multi-value string, splitting '%s' into %s",
+                            value,
+                            parts,
+                        )
+                        return await self._resolve_field_value_for_update(
+                            project_key, type_key, field_key, parts
+                        )
+            except Exception:
+                pass
+
         try:
             # 获取选项值 (label -> value)
             option_value = await self.meta.get_option_value(
@@ -550,17 +607,99 @@ class WorkItemProvider(Provider):
 
             # 返回 {label, value} 结构供更新 API 使用
             result = {"label": str(value), "value": option_value}
-            logger.info(
-                "Resolved option for update '%s' -> %s for field '%s'", value, result, field_key
+
+            # 检查字段类型：multi_select 类型字段需要返回列表格式
+            field_type = await self.meta.get_field_type(
+                project_key, type_key, field_key
             )
+            if field_type == "multi_select":
+                # multi_select 类型字段必须返回列表格式，即使只有一个值
+                result = [result]
+                logger.info(
+                    "Resolved option for multi_select update '%s' -> %s for field '%s'",
+                    value,
+                    result,
+                    field_key,
+                )
+            else:
+                logger.info(
+                    "Resolved option for update '%s' -> %s for field '%s'",
+                    value,
+                    result,
+                    field_key,
+                )
             return result
         except Exception as e:
-            logger.warning(
+            # 只有在非 Debug 模式下才记录 Warning，避免正常的 Failed resolution 刷屏
+            # 因为对于非 Select 字段（如文本、数字），这里抛错是预期的
+            logger.debug(
                 "Failed to resolve option '%s' for field '%s': %s",
                 value,
                 field_key,
                 e,
             )
+
+            # 检查字段类型，根据类型进行不同的处理
+            field_type = await self.meta.get_field_type(
+                project_key, type_key, field_key
+            )
+
+            # bool 类型字段：只接受有效的布尔值
+            if field_type == "bool":
+                # 如果已经是布尔值，直接返回
+                if isinstance(value, bool):
+                    return value
+
+                # 尝试将字符串转换为布尔值
+                if isinstance(value, str):
+                    lower_val = value.lower()
+                    if lower_val in ("true", "yes", "on", "1"):
+                        return True
+                    if lower_val in ("false", "no", "off", "0"):
+                        return False
+
+                # 如果输入不是有效的布尔值，抛出异常
+                field_name = (
+                    await self.meta.get_field_name(project_key, type_key, field_key)
+                    or field_key
+                )
+                logger.warning(
+                    "Invalid value '%s' for bool field '%s' (key=%s). "
+                    "Expected: true/yes/on/1 or false/no/off/0",
+                    value,
+                    field_name,
+                    field_key,
+                )
+                raise ValueError(
+                    f"无法更新 bool 字段 '{field_name}': 值 '{value}' 不是有效的布尔值"
+                )
+
+            # multi_select 类型字段不能接受布尔值或无效选项
+            if field_type == "multi_select":
+                field_name = (
+                    await self.meta.get_field_name(project_key, type_key, field_key)
+                    or field_key
+                )
+                logger.warning(
+                    "Cannot resolve option '%s' for multi_select field '%s' (key=%s). "
+                    "Value must be one of the available options.",
+                    value,
+                    field_name,
+                    field_key,
+                )
+                raise ValueError(
+                    f"无法更新 multi_select 字段 '{field_name}': 值 '{value}' 不在可用选项中"
+                )
+
+            # Special handling regarding Boolean fields (Checkbox) - 兜底处理
+            # 飞书 Checkbox 字段需要 bool 类型，但输入可能是 "true"/"yes" 字符串
+            if isinstance(value, str):
+                lower_val = value.lower()
+                if lower_val in ("true", "yes", "on"):
+                    return True
+                if lower_val in ("false", "no", "off"):
+                    return False
+
             return value  # Fallback: 非选择类型字段直接返回原值
 
     async def create_issue(
@@ -604,7 +743,18 @@ class WorkItemProvider(Provider):
             create_fields.append({"field_key": field_key, "field_value": user_key})
 
         # 2. Create Work Item
-        issue_id = await self.api.create(project_key, type_key, name, create_fields)
+        issue_data = await self.api.create(project_key, type_key, name, create_fields)
+        # API 返回数据可能是列表 [{id: xxxx}] 或直接是 {id: xxxx}，确保返回整数 ID
+        issue_id = None
+        if isinstance(issue_data, list) and issue_data:
+            issue_id = issue_data[0].get("id")
+        elif isinstance(issue_data, dict):
+            issue_id = issue_data.get("id")
+        elif isinstance(issue_data, int):
+            issue_id = issue_data
+
+        if issue_id is None:
+            raise ValueError("创建工作项失败: 未能获取到有效的 Issue ID")
 
         # 3. Update Priority (if needed)
         # Note: Priority cannot be set during creation for some reason, so we update it after.
@@ -617,7 +767,7 @@ class WorkItemProvider(Provider):
                     project_key, type_key, field_key, priority
                 )
 
-                logger.info("Updating priority to %s...", option_val)
+                logger.info("Updating priority to %s for issue %s...", option_val, issue_id)
                 await self.api.update(
                     project_key,
                     type_key,
@@ -625,9 +775,9 @@ class WorkItemProvider(Provider):
                     [{"field_key": field_key, "field_value": option_val}],
                 )
             except Exception as e:
-                logger.warning("Failed to update priority: %s", e)
+                logger.warning("Failed to update priority for issue %s: %s", issue_id, e)
 
-        return issue_id
+        return int(issue_id)
 
     async def get_issue_details(self, issue_id: int) -> Dict[str, Any]:
         """
@@ -862,16 +1012,6 @@ class WorkItemProvider(Provider):
         project_key = item.get("project_key") or await self._get_project_key()
         type_key = item.get("work_item_type_key") or await self._get_type_key()
 
-        # 获取字段定义映射 (Name -> Key)
-        try:
-            fields_map = await self.meta.list_fields(project_key, type_key)
-            # 反转映射 (Key -> Name)
-            # 注意: 如果有多个名称映射到同一个 Key (别名)，会随机保留一个
-            key_to_name = {v: k for k, v in fields_map.items()}
-        except Exception as e:
-            logger.warning("Failed to load field definitions: %s", e)
-            key_to_name = {}
-
         # 准备收集 ID 的容器
         users_to_fetch = set()
         work_items_to_fetch = set()
@@ -1008,7 +1148,7 @@ class WorkItemProvider(Provider):
                         "Failed to fetch related items from other types: %s", e
                     )
 
-        # 第二遍遍历: 构建可读字段
+        # 第二遍遍历: 构建可读字段并添加 field_name
         readable_fields = {}
 
         # 处理 fields 列表
@@ -1021,14 +1161,32 @@ class WorkItemProvider(Provider):
             if f_key is None:
                 continue
 
-            # 确定字段名称 (优先用别名，其次查定义，最后用 key)
-            field_name = f_alias
+            # 确定字段名称
+            # 优先级: metadata_manager 缓存中的 field_name > field_alias > field_key
+            # 原因: metadata_manager 中存储的是 API 返回的 field_name，最准确
+            field_name = None
+            try:
+                # 优先从 metadata_manager 缓存中获取 field_name
+                field_name = await self.meta.get_field_name(
+                    project_key, type_key, f_key
+                )
+            except Exception as e:
+                logger.debug(f"Failed to get field_name for {f_key}: {e}")
+
+            # 如果缓存中没有，使用 field_alias 作为备选
             if not field_name:
-                field_name = key_to_name.get(f_key, f_key)
+                field_name = f_alias
+
+            # 最后兜底：使用 field_key
+            if not field_name:
+                field_name = f_key
 
             # 确保是字符串
             if field_name is None:
                 field_name = str(f_key) if f_key else "unknown"
+
+            # 为字段对象添加 field_name（直接修改以保持引用一致性）
+            field["field_name"] = field_name
 
             readable_val = f_val
 
@@ -1136,6 +1294,9 @@ class WorkItemProvider(Provider):
 
             readable_fields[field_name] = readable_val
 
+        # 确保 enhanced 中的 fields 数组包含增强后的字段信息（含 field_name）
+        enhanced["fields"] = fields
+
         # 处理根目录特殊字段
         for key in ["owner", "created_by", "updated_by"]:
             val = item.get(key)
@@ -1212,14 +1373,12 @@ class WorkItemProvider(Provider):
         status: Optional[str] = None,
         assignee: Optional[str] = None,
         extra_fields: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    ) -> List[UpdateResult]:
         """
-        更新 Issue
+        更新 Issue（容错模式）
 
-        支持更新任意字段，包括自定义字段。系统会自动处理：
-        - 字段名称到 field_key 的转换
-        - 选项类型字段的 label 到 value 的转换
-        - 用户类型字段的姓名/邮箱到 user_key 的转换
+        将更新任务委托给 batch_update_issues 以实现字段级容错。
+        如果某些字段更新失败，会继续尝试其他字段，并返回详细的结果列表。
 
         Args:
             issue_id: Issue ID
@@ -1228,80 +1387,245 @@ class WorkItemProvider(Provider):
             description: 描述（可选）
             status: 状态（可选）
             assignee: 负责人（可选）
-            extra_fields: 额外字段字典（可选），格式为 {字段名称: 字段值}
-                         例如: {"DDR 容量": "32 GB", "芯片型号": "MT7981"}
+            extra_fields: 额外字段字典（可选）
         """
-        project_key = await self._get_project_key()
-        type_key = await self._get_type_key()
-
-        update_fields = []
-
-        if name is not None:
-            update_fields.append({"field_key": "name", "field_value": name})
-
-        if description is not None:
-            field_key = await self.meta.get_field_key(
-                project_key, type_key, "description"
-            )
-            update_fields.append({"field_key": field_key, "field_value": description})
-
-        if priority is not None:
-            field_key = await self.meta.get_field_key(project_key, type_key, "priority")
-            option_val = await self._resolve_field_value_for_update(
-                project_key, type_key, field_key, priority
-            )
-            update_fields.append({"field_key": field_key, "field_value": option_val})
-
-        if status is not None:
-            field_key = await self.meta.get_field_key(project_key, type_key, "status")
-            option_val = await self._resolve_field_value_for_update(
-                project_key, type_key, field_key, status
-            )
-            update_fields.append({"field_key": field_key, "field_value": option_val})
-
-        if assignee is not None:
-            user_key = await self.meta.get_user_key(assignee)
-            update_fields.append({"field_key": "owner", "field_value": user_key})
-
-        # 处理额外的自定义字段
-        if extra_fields:
-            for field_name, field_value in extra_fields.items():
-                try:
-                    # 获取字段 key
-                    field_key = await self.meta.get_field_key(
-                        project_key, type_key, field_name
-                    )
-
-                    # 尝试解析选项值（使用更新专用方法，返回 {label, value} 结构）
-                    resolved_value = await self._resolve_field_value_for_update(
-                        project_key, type_key, field_key, field_value
-                    )
-
-                    update_fields.append({
-                        "field_key": field_key,
-                        "field_value": resolved_value
-                    })
-                    logger.info(
-                        "Added extra field '%s' (key=%s) with value '%s' -> '%s'",
-                        field_name, field_key, field_value, resolved_value
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Failed to process extra field '%s': %s", field_name, e
-                    )
-                    raise ValueError(
-                        f"无法更新字段 '{field_name}': {str(e)}"
-                    ) from e
-
-        if update_fields:
-            await self.api.update(project_key, type_key, issue_id, update_fields)
-            logger.info("Updated Issue %d with %d fields", issue_id, len(update_fields))
+        return await self.batch_update_issues(
+            issue_ids=[issue_id],
+            name=name,
+            priority=priority,
+            description=description,
+            status=status,
+            assignee=assignee,
+            extra_fields=extra_fields,
+        )
 
     async def delete_issue(self, issue_id: int) -> None:
         """删除 Issue"""
         project_key = await self._get_project_key()
         type_key = await self._get_type_key()
         await self.api.delete(project_key, type_key, issue_id)
+
+    async def _resolve_update_fields(
+        self,
+        project_key: str,
+        type_key: str,
+        issue_id: int,
+        name: Optional[str] = None,
+        priority: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[UpdateResult]]:
+        """将人类可读的字段解析为 API 所需的 field_key/value 结构。同时返回解析失败的字段结果。"""
+        resolved_fields = []
+        failed_results = []
+
+        async def add_field(f_name, f_value, f_key_getter):
+            try:
+                # 预先清洗字符串输入
+                if isinstance(f_value, str):
+                    f_value = f_value.strip()
+
+                f_key = await f_key_getter()
+                if f_key == "name":
+                    resolved_fields.append({"field_key": "name", "field_value": f_value, "field_name": f_name})
+                    return
+
+                # 检查字段类型和空值过滤
+                field_type = await self.meta.get_field_type(project_key, type_key, f_key)
+                if f_value is None or (isinstance(f_value, str) and not f_value.strip()):
+                    # 允许清空的字段类型列表（主要是文本类）
+                    if field_type not in ["text", "textarea", "name"]:
+                        logger.info("Skipping empty value for non-text field '%s'", f_name)
+                        return
+
+                option_val = await self._resolve_field_value_for_update(project_key, type_key, f_key, f_value)
+                resolved_fields.append({"field_key": f_key, "field_value": option_val, "field_name": f_name})
+            except Exception as e:
+                logger.warning("Failed to resolve field '%s': %s", f_name, e)
+                failed_results.append(UpdateResult(success=False, issue_id=issue_id, field_name=f_name, message=f"字段解析失败: {e}"))
+
+        if name is not None:
+            await add_field("name", name, lambda: asyncio.sleep(0, "name") or "name")
+
+        if description is not None:
+            await add_field("description", description, lambda: self.meta.get_field_key(project_key, type_key, "description"))
+
+        if priority is not None:
+            await add_field("priority", priority, lambda: self.meta.get_field_key(project_key, type_key, "priority"))
+
+        if status is not None:
+            await add_field("status", status, lambda: self.meta.get_field_key(project_key, type_key, "status"))
+
+        if assignee is not None:
+            await add_field("assignee", assignee, lambda: asyncio.sleep(0, "owner") or "owner")
+
+        if extra_fields:
+            for f_name, f_value in extra_fields.items():
+                if not await self._field_exists(project_key, type_key, f_name):
+                    failed_results.append(UpdateResult(success=False, issue_id=issue_id, field_name=f_name, message=f"字段 '{f_name}' 不存在"))
+                    continue
+                await add_field(f_name, f_value, lambda name=f_name: self.meta.get_field_key(project_key, type_key, name))
+
+        return resolved_fields, failed_results
+
+    async def _perform_single_field_update(
+        self,
+        project_key: str,
+        type_key: str,
+        issue_id: int,
+        field_name: str,
+        field_key: str,
+        resolved_value: Any,
+    ) -> UpdateResult:
+        """执行单个工作项的单个字段更新操作。已接收预解析数据。"""
+        max_retries = 3
+        base_delay = 1.0
+
+        for attempt in range(max_retries + 1):
+            try:
+                # 调用 API 进行更新，使用信号量限制并发
+                async with self._api_semaphore:
+                    await self.api.update(
+                        project_key,
+                        type_key,
+                        issue_id,
+                        [{"field_key": field_key, "field_value": resolved_value}]
+                    )
+                    await asyncio.sleep(0.1)
+
+                return UpdateResult(
+                    success=True,
+                    issue_id=issue_id,
+                    field_name=field_name,
+                    message=f"字段 '{field_name}' 更新成功",
+                )
+
+            except Exception as e:
+                is_429 = False
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                    is_429 = True
+                elif "429" in str(e) and "Too Many Requests" in str(e):
+                    is_429 = True
+
+                if is_429 and attempt < max_retries:
+                    delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                    logger.warning("Rate limit (429) hit. Retrying in %.2f seconds...", delay)
+                    await asyncio.sleep(delay)
+                    continue
+
+                logger.error("Failed to update issue %d field '%s': %s", issue_id, field_name, e)
+
+                error_detail = str(e)
+                # 增强的错误提取逻辑：直接从异常对象的 response 中解析
+                if hasattr(e, "response") and e.response is not None:
+                    try:
+                        err_data = e.response.json()
+                        api_msg = err_data.get("err_msg") or err_data.get("msg")
+                        inner_err = err_data.get("err", {})
+                        inner_msg = None
+                        if isinstance(inner_err, dict):
+                            inner_msg = inner_err.get("msg") or inner_err.get("err_msg")
+
+                        if api_msg and inner_msg and api_msg != inner_msg:
+                            error_detail = f"{api_msg}: {inner_msg}"
+                        elif inner_msg:
+                            error_detail = inner_msg
+                        elif api_msg:
+                            error_detail = api_msg
+
+                        # 特殊处理：如果包含 "is illegal"，提示可能是权限或流程锁定
+                        if "is illegal" in error_detail:
+                            error_detail += " (字段可能被流程锁定、只读或权限不足)"
+                    except Exception as parse_err:
+                        logger.debug("Failed to parse API error response: %s", parse_err)
+                        # 如果解析失败，保留原始 str(e) 但去掉冗余的 URL 信息以保持整洁
+                        if "for url" in error_detail:
+                            error_detail = error_detail.split("for url")[0].strip()
+
+                return UpdateResult(
+                    success=False,
+                    issue_id=issue_id,
+                    field_name=field_name,
+                    message=f"更新字段 '{field_name}' 失败: {error_detail}",
+                )
+
+        return UpdateResult(success=False, issue_id=issue_id, field_name=field_name, message="重试次数耗尽")
+
+    async def batch_update_issues(
+        self,
+        issue_ids: List[int],
+        *,
+        name: Optional[str] = None,
+        priority: Optional[str] = None,
+        description: Optional[str] = None,
+        status: Optional[str] = None,
+        assignee: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
+    ) -> List[UpdateResult]:
+        """批量更新多个工作项。采用乐观并发策略优化耗时。"""
+        if not issue_ids:
+            return []
+
+        project_key = await self._get_project_key()
+        type_key = await self._get_type_key()
+
+        # 1. 预解析所有字段（仅解析一次）
+        # 注意：这里解析失败的 issue_id 暂时用第一个，后续多 Issue 场景需要复制
+        resolved_fields, base_failed_results = await self._resolve_update_fields(
+            project_key, type_key, issue_ids[0],
+            name, priority, description, status, assignee, extra_fields
+        )
+
+        all_results = []
+        # 为所有 Issue 复制解析失败的结果
+        for issue_id in issue_ids:
+            for fr in base_failed_results:
+                all_results.append(fr._replace(issue_id=issue_id))
+
+        if not resolved_fields:
+            return all_results
+
+        # 2. 乐观执行策略：如果只有一个 Issue，尝试一次性更新所有字段
+        if len(issue_ids) == 1:
+            issue_id = issue_ids[0]
+            try:
+                logger.info("Optimistic batch update for issue %d", issue_id)
+                api_payload = [{"field_key": f["field_key"], "field_value": f["field_value"]} for f in resolved_fields]
+
+                async with self._api_semaphore:
+                    await self.api.update(project_key, type_key, issue_id, api_payload)
+
+                # 全部成功
+                all_results.extend([
+                    UpdateResult(success=True, issue_id=issue_id, field_name=f["field_name"], message="更新成功")
+                    for f in resolved_fields
+                ])
+                return all_results
+            except Exception as e:
+                is_429 = "429" in str(e) or (isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429)
+                if is_429:
+                    logger.warning("Optimistic update hit rate limit (429), falling back to individual updates.")
+                else:
+                    logger.warning("Optimistic update failed for issue %d: %s. Falling back to individual updates for fault tolerance.", issue_id, e)
+                # 降级执行：进入下方的逐字段更新逻辑
+
+        # 3. 逐字段更新（降级或多 Issue 路径）
+        tasks = []
+        for issue_id in issue_ids:
+            for field in resolved_fields:
+                tasks.append(
+                    self._perform_single_field_update(
+                        project_key, type_key, issue_id,
+                        field["field_name"], field["field_key"], field["field_value"]
+                    )
+                )
+
+        logger.info("Running %d individual update tasks", len(tasks))
+        results = await asyncio.gather(*tasks)
+        all_results.extend([res for res in results if isinstance(res, UpdateResult)])
+        return all_results
 
     async def filter_issues(
         self,
@@ -1620,7 +1944,9 @@ class WorkItemProvider(Provider):
                 # 如果出现错误但没有明确停止信号，也停止，防止数据不一致导致的问题
                 # 或者可以实现重试逻辑，这里选择安全停止
                 if has_error:
-                    logger.warning("Stopping fetch due to errors in page retrieval to ensure data consistency")
+                    logger.warning(
+                        "Stopping fetch due to errors in page retrieval to ensure data consistency"
+                    )
                     break
 
                 current_page += CONCURRENT_PAGES

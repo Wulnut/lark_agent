@@ -42,7 +42,7 @@ class TestWorkItemE2E:
         完整的 CRUD 生命周期测试:
         Create -> Get -> Update -> Delete
         """
-        from src.providers.project.work_item_provider import WorkItemProvider
+        from src.providers.lark_project.work_item_provider import WorkItemProvider
 
         provider = WorkItemProvider(project_key=TEST_PROJECT_KEY)
         created_issue_id = None
@@ -115,7 +115,7 @@ class TestWorkItemE2E:
 
     async def test_filter_by_status(self, save_snapshot):
         """测试按状态过滤 (使用中文字段名 '状态')"""
-        from src.providers.project.work_item_provider import WorkItemProvider
+        from src.providers.lark_project.work_item_provider import WorkItemProvider
 
         provider = WorkItemProvider(project_key=TEST_PROJECT_KEY)
 
@@ -141,7 +141,7 @@ class TestWorkItemE2E:
 
     async def test_list_available_options(self, save_snapshot):
         """测试获取字段选项 (使用中文字段名)"""
-        from src.providers.project.work_item_provider import WorkItemProvider
+        from src.providers.lark_project.work_item_provider import WorkItemProvider
 
         provider = WorkItemProvider(project_key=TEST_PROJECT_KEY)
 

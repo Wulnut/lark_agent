@@ -7,7 +7,7 @@ import logging
 import pytest
 
 from src.core.config import settings
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -127,6 +127,17 @@ async def test_search_params_structure():
 
     print(f"构建的search_group: {search_group}")
 
+    # 解析需要查询的字段key
+    query_fields = []
+    for field_name in ["priority", "status", "owner"]:
+        try:
+            fk = await provider.meta.get_field_key(project_key, type_key, field_name)
+            query_fields.append(fk)
+        except Exception:
+            print(f"Warning: Field {field_name} not found")
+
+    print(f"查询字段Keys: {query_fields}")
+
     # 直接调用API
     try:
         result = await provider.api.search_params(
@@ -135,12 +146,14 @@ async def test_search_params_structure():
             search_group=search_group,
             page_num=1,
             page_size=2,
-            fields=["priority", "status", "owner"],
+            fields=query_fields,
         )
 
         print(f"API响应类型: {type(result)}")
         if isinstance(result, dict):
-            print(f"工作项数量: {len(result.get('work_items', []))}")
+            # 兼容 API 返回格式（如果是 list 包装的）
+            items = result.get("work_items", [])
+            print(f"工作项数量: {len(items)}")
             print(f"总数量: {result.get('total', 0)}")
 
             if result.get("work_items"):
@@ -156,6 +169,26 @@ async def test_search_params_structure():
 
     except Exception as e:
         print(f"API调用失败: {e}")
+        if hasattr(e, "response"):
+            print(f"Error Response: {e.response.text}")
+
+        # 尝试不带 fields 参数再次调用，排除字段权限问题
+        print("\n尝试不带 fields 参数调用...")
+        try:
+            result = await provider.api.search_params(
+                project_key=project_key,
+                work_item_type_key=type_key,
+                search_group=search_group,
+                page_num=1,
+                page_size=2,
+            )
+            print("不带 fields 参数调用成功！")
+            print(f"结果数量: {len(result.get('work_items', []))}")
+        except Exception as e2:
+            print(f"不带 fields 参数调用也失败: {e2}")
+            if hasattr(e2, "response"):
+                print(f"Error Response 2: {e2.response.text}")
+
         import traceback
 
         traceback.print_exc()

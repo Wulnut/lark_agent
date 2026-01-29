@@ -11,7 +11,7 @@
 - L-User: UserAPI (用户相关，独立层)
 
 使用示例:
-    from src.providers.project.api import ProjectAPI, WorkItemAPI
+    from src.providers.lark_project.api import ProjectAPI, WorkItemAPI
 
     project_api = ProjectAPI()
     projects = await project_api.list_projects()

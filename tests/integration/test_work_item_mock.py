@@ -11,10 +11,10 @@ import pytest
 import pytest_asyncio
 import respx
 from httpx import Response
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 from src.core.config import settings
 from src.core import project_client as client_module
-from src.providers.project.managers.metadata_manager import MetadataManager
+from src.providers.lark_project.managers.metadata_manager import MetadataManager
 
 
 @pytest.fixture
@@ -172,10 +172,7 @@ async def test_create_work_item_flow(provider, respx_mock):
 
     # API returns list of created items, provider returns that structure if not processed
     # WorkItemAPI returns data.get("data"), which is [{"id": 1001, ...}]
-    if isinstance(issue_id, list):
-        assert issue_id[0]["id"] == 1001
-    else:
-        assert issue_id == 1001
+    assert issue_id == 1001
 
     # Verify Create Call
     create_call = respx_mock.calls.filter(url__contains="/create").last
@@ -312,6 +309,7 @@ async def test_pagination_flow(provider, respx_mock):
     )
     assert len(result["items"]) == 2
     assert result["page_num"] == 1
+    assert result["page_size"] == 20
 
     # Verify request params
     # call = respx_mock.calls.filter(url__contains="/search/params").last
@@ -334,8 +332,10 @@ async def test_api_error_handling(provider, respx_mock):
         )
     )
 
-    with pytest.raises(Exception) as exc:
-        await provider.update_issue(5005, priority="InvalidValue")
+    results = await provider.update_issue(5005, priority="InvalidValue")
 
-    # The error message from ProjectAPI/WorkItemAPI uses "err_msg"
-    assert "Invalid field value" in str(exc.value)
+    assert isinstance(results, list)
+    assert len(results) > 0
+    # 至少有一个更新操作应该失败
+    assert all(not r.success for r in results)
+    assert any("Invalid field value" in r.message for r in results)

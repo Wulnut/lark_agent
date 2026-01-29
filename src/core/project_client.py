@@ -22,6 +22,7 @@ from tenacity import (
 
 from src.core.auth import auth_manager
 from src.core.config import settings
+from src.core.context import user_key_context
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,8 @@ class ProjectAuth(httpx.Auth):
 
         request.headers["X-PLUGIN-TOKEN"] = token
 
-        user_key = settings.FEISHU_PROJECT_USER_KEY
+        # 优先使用上下文中的 user_key，其次使用配置文件中的
+        user_key = user_key_context.get() or settings.FEISHU_PROJECT_USER_KEY
         if user_key:
             request.headers["X-USER-KEY"] = user_key
 

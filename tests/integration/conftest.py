@@ -68,7 +68,7 @@ def reset_singletons():
     注意：不在teardown时关闭client，避免影响后续测试
     """
     import src.core.project_client as pc_module
-    from src.providers.project.managers.metadata_manager import MetadataManager
+    from src.providers.lark_project.managers.metadata_manager import MetadataManager
 
     # 测试前：强制重置单例引用，确保每个测试使用新的实例
     # 如果存在旧的client且已关闭，先清理它

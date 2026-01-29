@@ -215,8 +215,12 @@ class TestMCPTools:
     async def test_update_task_success(self, mock_provider):
         """测试更新任务成功 - 验证返回包含 issue_id"""
         from src.mcp_server import update_task
+        from src.providers.lark_project.work_item_provider import UpdateResult
 
-        mock_provider.update_issue.return_value = None
+        # 模拟 provider.update_issue 返回一个成功的 UpdateResult 列表
+        mock_provider.update_issue.return_value = [
+            UpdateResult(success=True, issue_id=12345, field_name="status", message="更新成功")
+        ]
 
         result = await update_task(
             project="proj_xxx",
@@ -225,8 +229,12 @@ class TestMCPTools:
             priority="P1",
         )
 
-        # 验证返回的 issue_id（核心信息）
-        assert "12345" in result
+        # 验证返回的 JSON 结构和内容
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "更新成功" in data["message"]
+        assert data["data"]["issue_id"] == 12345
+        assert isinstance(data["data"]["results"], list)
         mock_provider.update_issue.assert_awaited_once_with(
             issue_id=12345,
             name=None,
@@ -300,10 +308,10 @@ class TestHelperFunctions:
     def provider(self):
         """创建 WorkItemProvider 实例用于测试辅助方法"""
         with patch(
-            "src.providers.project.work_item_provider.settings"
+            "src.providers.lark_project.work_item_provider.settings"
         ) as mock_settings:
             mock_settings.FEISHU_PROJECT_KEY = "test_project"
-            from src.providers.project.work_item_provider import WorkItemProvider
+            from src.providers.lark_project.work_item_provider import WorkItemProvider
 
             return WorkItemProvider()
 

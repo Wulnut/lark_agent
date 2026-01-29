@@ -6,9 +6,8 @@
 import json
 import pytest
 
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 from src.core.project_client import get_project_client
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio

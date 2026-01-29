@@ -123,7 +123,7 @@ class WorkItemAPI:
     ) -> None:
         """更新工作项"""
         logger.info(
-            "Updating work item: project_key=%s, type_key=%s, id=%d",
+            "Updating work item: project_key=%s, type_key=%s, id=%s",
             _mask_project_key(project_key),
             work_item_type_key,
             work_item_id,
@@ -145,14 +145,14 @@ class WorkItemAPI:
             )
             raise Exception(f"Update WorkItem failed: {err_msg}")
 
-        logger.info("Work item updated successfully: id=%d", work_item_id)
+        logger.info("Work item updated successfully: id=%s", work_item_id)
 
     async def delete(
         self, project_key: str, work_item_type_key: str, work_item_id: int
     ) -> None:
         """删除工作项"""
         logger.warning(
-            "Deleting work item: project_key=%s, type_key=%s, id=%d",
+            "Deleting work item: project_key=%s, type_key=%s, id=%s",
             _mask_project_key(project_key),
             work_item_type_key,
             work_item_id,
@@ -171,7 +171,7 @@ class WorkItemAPI:
             )
             raise Exception(f"Delete WorkItem failed: {err_msg}")
 
-        logger.info("Work item deleted successfully: id=%d", work_item_id)
+        logger.info("Work item deleted successfully: id=%s", work_item_id)
 
     async def filter(
         self,
@@ -292,29 +292,39 @@ class WorkItemAPI:
         work_item_ids: List[int],
         update_fields: List[Dict],
     ) -> str:
-        """批量更新工作项 (注意：Open API 仅支持单字段批量更新，这里我们封装一下，或者按 API 实际能力实现)
+        """批量更新工作项的单个字段。
 
-        API: /open_api/work_item/batch_update
-        Body:
-        {
-            "project_key": "xxx",
-            "work_item_type_key": "xxx",
-            "work_item_ids": [1, 2],
-            "field_key": "priority",
-            "after_field_value": "option_2"
-        }
-        注意：该 API 每次只能更新一个字段。
+        飞书 API 限制：每次请求仅能更新一个字段。
+        多字段更新需由上层业务拆分为多次调用。
+
+        API: POST /open_api/work_item/batch_update
+
+        Args:
+            project_key: 项目 Key。
+            work_item_type_key: 工作项类型 Key。
+            work_item_ids: 要更新的工作项 ID 列表。
+            update_fields: 字段列表（当前仅支持单元素）。
+                每个元素格式: {"field_key": str, "field_value": Any}
+
+        Returns:
+            后台任务 ID（用于异步任务追踪）。
+
+        Raises:
+            NotImplementedError: 当传入多个字段时。
+            RuntimeError: 当 API 返回业务错误时。
         """
         url = "/open_api/work_item/batch_update"
 
-        # 暂时只支持单个字段的批量更新，因为 API 限制
-        # 如果传入多个字段，需要上层业务拆分调用
+        # API 限制：单次仅支持一个字段
         if not update_fields or len(update_fields) > 1:
             raise NotImplementedError(
-                "Batch update currently only supports single field update per call"
+                "Batch update only supports single field per call"
             )
 
         field = update_fields[0]
+
+        # update_mode: 0 = 覆盖原值（Replace）
+        UPDATE_MODE_REPLACE = 0
 
         payload = {
             "project_key": project_key,
@@ -322,10 +332,11 @@ class WorkItemAPI:
             "work_item_ids": work_item_ids,
             "field_key": field["field_key"],
             "after_field_value": field["field_value"],
+            "update_mode": UPDATE_MODE_REPLACE,
         }
 
         logger.info(
-            "Batch updating work items: project_key=%s, type_key=%s, ids_count=%d, field=%s",
+            "Batch update: project=%s, type=%s, count=%d, field=%s",
             _mask_project_key(project_key),
             work_item_type_key,
             len(work_item_ids),
@@ -334,19 +345,18 @@ class WorkItemAPI:
 
         resp = await self.client.post(url, json=payload)
         resp.raise_for_status()
+
         data = resp.json()
         if data.get("err_code") != 0:
             err_msg = data.get("err_msg", "Unknown error")
             logger.error(
-                "Batch Update failed: err_code=%s, err_msg=%s",
-                data.get("err_code"),
-                err_msg,
+                "Batch update failed: code=%s, msg=%s", data.get("err_code"), err_msg
             )
-            raise Exception(f"Batch Update failed: {err_msg}")
+            raise RuntimeError(f"批量更新失败: {err_msg}")
 
         task_id = data.get("data")
-        logger.info("Batch update successful: task_id=%s", task_id)
-        return task_id  # 返回 task_id
+        logger.info("Batch update queued: task_id=%s", task_id)
+        return task_id
 
     async def get_create_meta(self, project_key: str, work_item_type_key: str) -> Dict:
         """获取创建工作项的元数据

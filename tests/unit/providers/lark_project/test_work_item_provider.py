@@ -2,20 +2,22 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 
 
 @pytest.fixture
 def mock_work_item_api():
     """Mock WorkItemAPI 实例"""
-    with patch("src.providers.project.work_item_provider.WorkItemAPI") as mock_cls:
+    with patch("src.providers.lark_project.work_item_provider.WorkItemAPI") as mock_cls:
         yield mock_cls.return_value
 
 
 @pytest.fixture
 def mock_metadata():
     """Mock MetadataManager 实例"""
-    with patch("src.providers.project.work_item_provider.MetadataManager") as mock_cls:
+    with patch(
+        "src.providers.lark_project.work_item_provider.MetadataManager"
+    ) as mock_cls:
         mock_instance = AsyncMock()
         mock_cls.get_instance.return_value = mock_instance
         yield mock_instance
@@ -95,70 +97,6 @@ async def test_delete_issue(mock_work_item_api, mock_metadata):
     await provider.delete_issue(1001)
 
     mock_work_item_api.delete.assert_awaited_with("proj_123", "type_issue", 1001)
-
-
-@pytest.mark.asyncio
-async def test_update_issue(mock_work_item_api, mock_metadata):
-    """测试更新 Issue"""
-    # Setup mocks
-    mock_metadata.get_project_key.return_value = "proj_123"
-    mock_metadata.get_type_key.return_value = "type_issue"
-    mock_metadata.get_field_key.side_effect = lambda pk, tk, name: f"field_{name}"
-    mock_metadata.get_option_value.return_value = "opt_p0"
-    mock_metadata.get_user_key.return_value = "user_789"
-
-    mock_work_item_api.update = AsyncMock()
-
-    provider = WorkItemProvider("My Project")
-
-    # Execute: 更新多个字段
-    await provider.update_issue(
-        issue_id=1001,
-        name="Updated Title",
-        priority="P0",
-        assignee="Bob",
-    )
-
-    # Verify
-    mock_work_item_api.update.assert_awaited_once()
-    args, _ = mock_work_item_api.update.call_args
-
-    assert args[0] == "proj_123"  # project_key
-    assert args[1] == "type_issue"  # type_key
-    assert args[2] == 1001  # issue_id
-
-    update_fields = args[3]
-    # 应该包含 name, priority, owner 三个字段
-    field_keys = [f["field_key"] for f in update_fields]
-    assert "name" in field_keys
-    assert "field_priority" in field_keys
-    assert "owner" in field_keys
-
-
-@pytest.mark.asyncio
-async def test_update_issue_partial(mock_work_item_api, mock_metadata):
-    """测试部分更新 Issue（只更新一个字段）"""
-    mock_metadata.get_project_key.return_value = "proj_123"
-    mock_metadata.get_type_key.return_value = "type_issue"
-    mock_metadata.get_field_key.side_effect = lambda pk, tk, name: f"field_{name}"
-    mock_metadata.get_option_value.return_value = "opt_done"
-
-    mock_work_item_api.update = AsyncMock()
-
-    provider = WorkItemProvider("My Project")
-
-    # Execute: 只更新状态
-    await provider.update_issue(issue_id=1001, status="已完成")
-
-    # Verify
-    mock_work_item_api.update.assert_awaited_once()
-    args, _ = mock_work_item_api.update.call_args
-
-    update_fields = args[3]
-    assert len(update_fields) == 1
-    assert update_fields[0]["field_key"] == "field_status"
-    # _resolve_field_value_for_update 返回 {label, value} 结构用于 select 类型字段
-    assert update_fields[0]["field_value"] == {"label": "已完成", "value": "opt_done"}
 
 
 @pytest.mark.asyncio
@@ -393,19 +331,23 @@ class TestProviderExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_field_key_not_found(self, mock_work_item_api, mock_metadata):
-        """测试字段名不存在时抛出明确错误"""
+        """测试字段名不存在时返回失败结果"""
         mock_metadata.get_project_key.return_value = "proj_123"
         mock_metadata.get_type_key.return_value = "type_issue"
+        # 模拟 get_field_key 抛出 ValueError
         mock_metadata.get_field_key.side_effect = ValueError(
-            "字段 'unknown_field' 不存在"
+            "字段 'status' 不存在"
         )
 
         provider = WorkItemProvider("My Project")
 
-        with pytest.raises(ValueError) as exc_info:
-            await provider.update_issue(issue_id=1001, status="进行中")
+        # 现在不再抛出异常，而是返回结果列表
+        results = await provider.update_issue(issue_id=1001, status="进行中")
 
-        assert "不存在" in str(exc_info.value)
+        assert len(results) == 1
+        assert results[0].success is False
+        assert "不存在" in results[0].message
+        assert results[0].field_name == "status"
 
     @pytest.mark.asyncio
     async def test_option_value_fallback(self, mock_work_item_api, mock_metadata):
@@ -576,6 +518,18 @@ async def test_get_readable_issue_details(mock_work_item_api, mock_metadata):
         }
     )
 
+    # 模拟 field_key -> field_name 映射
+    async def mock_get_field_name(project_key, type_key, field_key):
+        field_key_to_name = {
+            "owner": "owner",
+            "status": "status",
+            "priority": "priority",
+            "creator": "creator",
+        }
+        return field_key_to_name.get(field_key)
+
+    mock_metadata.get_field_name = AsyncMock(side_effect=mock_get_field_name)
+
     # 模拟 API 返回包含用户字段的工作项
     mock_work_item_api.query = AsyncMock(
         return_value=[
@@ -621,9 +575,147 @@ async def test_get_readable_issue_details(mock_work_item_api, mock_metadata):
     assert readable_fields["status"] == "进行中"
     assert readable_fields["priority"] == "P0"
 
+    # 验证 fields 数组中每个字段都包含 field_name
+    assert "fields" in result
+    fields = result["fields"]
+    assert len(fields) > 0
+    for field in fields:
+        assert "field_name" in field, f"字段 {field.get('field_key')} 缺少 field_name"
+        assert "field_key" in field
+        assert "field_value" in field
+
     # 验证常用字段的顶级别名
     assert result.get("readable_owner") == "张三"
     assert result.get("readable_creator") == "李四"
 
     # 验证原始数据仍然存在
     assert "field_value_pairs" in result
+
+
+class TestBatchUpdateIssues:
+    """测试批量更新工作项"""
+
+    @pytest.fixture(autouse=True)
+    def setup_mocks(self, mock_work_item_api, mock_metadata):
+        mock_metadata.get_project_key.return_value = "proj_123"
+        mock_metadata.get_type_key.return_value = "type_issue"
+        # 模拟 get_field_key，对 'InvalidField' 抛出异常
+        mock_metadata.get_field_key.side_effect = lambda pk, tk, name: (
+            f"field_{name}"
+            if name != "InvalidField"
+            else (_ for _ in ()).throw(ValueError("字段 'InvalidField' 不存在"))
+        )
+        mock_metadata.get_option_value.side_effect = lambda pk, tk, fk, val: (
+            "opt_val"
+            if fk in ["field_priority", "field_status"]
+            else (_ for _ in ()).throw(Exception("不是选项字段"))
+        )
+        mock_metadata.get_user_key.return_value = "user_abc"
+
+        # mock_work_item_api.update 会被 _perform_single_field_update 调用
+        # 模拟每次更新都成功
+        mock_work_item_api.update = AsyncMock(return_value=None)
+
+    @pytest.mark.asyncio
+    async def test_batch_update_issues_all_success(self, mock_work_item_api):
+        issue_ids = [101, 102]
+        results = await WorkItemProvider("My Project").batch_update_issues(
+            issue_ids=issue_ids,
+            name="New Title",
+            priority="P1",
+            extra_fields={"自定义字段": "Custom Value"},
+        )
+
+        assert (
+            len(results) == len(issue_ids) * 3
+        )  # 2 issues * 3 fields (name, priority, extra_field)
+        for result in results:
+            assert result.success is True
+            assert result.issue_id in issue_ids
+            assert "更新成功" in result.message
+
+        # Verify calls for each field and each issue
+        # 总共 2 issues * 3 fields = 6 次调用 WorkItemAPI.update
+        assert mock_work_item_api.update.call_count == len(issue_ids) * 3
+
+        call_args_list = mock_work_item_api.update.call_args_list
+        # 检查 issue 101 的 'name' 字段更新
+        assert any(
+            call.args[2] == 101
+            and call.args[3][0]["field_key"] == "name"
+            and call.args[3][0]["field_value"] == "New Title"
+            for call in call_args_list
+        )
+        # 检查 issue 102 的 'priority' 字段更新
+        assert any(
+            call.args[2] == 102
+            and call.args[3][0]["field_key"] == "field_priority"
+            and call.args[3][0]["field_value"]["value"] == "opt_val"
+            for call in call_args_list
+        )
+        # 检查 issue 101 的 '自定义字段' 更新
+        assert any(
+            call.args[2] == 101
+            and call.args[3][0]["field_key"] == "field_自定义字段"
+            and call.args[3][0]["field_value"] == "Custom Value"
+            for call in call_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_update_issues_partial_failure(
+        self, mock_work_item_api, mock_metadata
+    ):
+        issue_ids = [101, 102]
+
+        # 模拟 get_field_key 在解析 'InvalidField' 时抛出异常
+        # 这样 _perform_single_field_update 会捕获它并返回 success=False
+
+        results = await WorkItemProvider("My Project").batch_update_issues(
+            issue_ids=issue_ids,
+            name="Partial Update Title",
+            priority="P2",
+            extra_fields={"InvalidField": "Some Value", "ValidField": "Another Value"},
+        )
+
+        # 预期总共有 2 issues * 4 fields = 8 个结果 (name, priority, InvalidField, ValidField)
+        assert len(results) == len(issue_ids) * 4
+
+        success_count = sum(1 for r in results if r.success)
+        failure_count = sum(1 for r in results if not r.success)
+
+        # 预期:
+        # 101: name (success), priority (success), InvalidField (fail), ValidField (success)
+        # 102: name (success), priority (success), InvalidField (fail), ValidField (success)
+        # 总计: 6 success, 2 fail
+        assert success_count == 6
+        assert failure_count == 2
+
+        # 检查具体的失败结果
+        failed_results = [r for r in results if not r.success]
+        assert len(failed_results) == 2
+
+        for failed_res in failed_results:
+            assert failed_res.field_name == "InvalidField"
+            assert "不存在" in failed_res.message
+            assert failed_res.issue_id in issue_ids
+
+        # 检查成功的调用 WorkItemAPI.update 的次数
+        # 2 issues * 3 (name, priority, ValidField) = 6 次 api.update 调用
+        assert mock_work_item_api.update.call_count == 6
+
+    @pytest.mark.asyncio
+    async def test_batch_update_issues_no_fields_to_update(self, mock_work_item_api):
+        issue_ids = [101, 102]
+        results = await WorkItemProvider("My Project").batch_update_issues(
+            issue_ids=issue_ids
+        )
+        assert len(results) == 0
+        mock_work_item_api.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_update_issues_empty_issue_ids(self, mock_work_item_api):
+        results = await WorkItemProvider("My Project").batch_update_issues(
+            issue_ids=[], name="Test"
+        )
+        assert len(results) == 0
+        mock_work_item_api.update.assert_not_awaited()

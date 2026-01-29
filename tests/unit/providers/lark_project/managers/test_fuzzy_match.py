@@ -1,6 +1,6 @@
 
 import pytest
-from src.providers.project.managers.metadata_manager import MetadataManager
+from src.providers.lark_project.managers.metadata_manager import MetadataManager
 
 class TestFuzzyMatch:
     """测试模糊匹配逻辑"""

@@ -1,7 +1,7 @@
 import pytest
 import logging
 from unittest.mock import MagicMock
-from src.providers.project.managers.metadata_manager import MetadataManager
+from src.providers.lark_project.managers.metadata_manager import MetadataManager
 
 class TestMetadataManagerSafety:
     """Tests for safety features in MetadataManager._flatten_options"""

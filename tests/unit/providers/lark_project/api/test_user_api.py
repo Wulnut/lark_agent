@@ -11,14 +11,14 @@ UserAPI 测试模块
 
 import pytest
 from unittest.mock import AsyncMock, patch
-from src.providers.project.api.user import UserAPI
-from tests.unit.providers.project.api.conftest import create_mock_response
+from src.providers.lark_project.api.user import UserAPI
+from tests.unit.providers.lark_project.api.conftest import create_mock_response
 
 
 @pytest.fixture
 def mock_client():
     """模拟 ProjectClient"""
-    with patch("src.providers.project.api.user.get_project_client") as mock:
+    with patch("src.providers.lark_project.api.user.get_project_client") as mock:
         client_instance = AsyncMock()
         mock.return_value = client_instance
         yield client_instance

@@ -30,7 +30,7 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Any
 
-from src.providers.project.api import ProjectAPI, MetadataAPI, FieldAPI, UserAPI
+from src.providers.lark_project.api import ProjectAPI, MetadataAPI, FieldAPI, UserAPI
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +101,14 @@ class MetadataManager:
         # L3: project_key -> type_key -> {field_name -> field_key}
         self._field_cache: Dict[str, Dict[str, Dict[str, str]]] = {}
 
+        # L3-reverse: project_key -> type_key -> {field_key -> field_name} (反向映射)
+        self._field_key_to_name_cache: Dict[str, Dict[str, Dict[str, str]]] = {}
+
         # L4: project_key -> type_key -> field_key -> {label -> value}
         self._option_cache: Dict[str, Dict[str, Dict[str, Dict[str, str]]]] = {}
+
+        # L3-type: project_key -> type_key -> {field_key -> field_type_key} (字段类型缓存)
+        self._field_type_cache: Dict[str, Dict[str, Dict[str, str]]] = {}
 
         # L5: project_key -> type_key -> {role_name -> role_key} (角色名称映射)
         # 例如: {"67dc...": {"670f...": {"报告人": "role_cc5cef", "经办人": "role_a06e00"}}}
@@ -134,6 +140,8 @@ class MetadataManager:
         self._project_cache.clear()
         self._type_cache.clear()
         self._field_cache.clear()
+        self._field_key_to_name_cache.clear()
+        self._field_type_cache.clear()
         self._option_cache.clear()
         self._role_cache.clear()
         self._user_cache.clear()
@@ -440,7 +448,9 @@ class MetadataManager:
             max_depth: 最大递归深度，防止栈溢出
         """
         if depth > max_depth:
-            logger.warning(f"Recursion depth limit reached ({max_depth}) in _flatten_options")
+            logger.warning(
+                f"Recursion depth limit reached ({max_depth}) in _flatten_options"
+            )
             return
 
         for opt in options:
@@ -449,6 +459,8 @@ class MetadataManager:
                 continue
 
             label = opt.get("label")
+            if label:
+                label = label.strip()
             value = opt.get("value")
 
             # 存储当前节点
@@ -504,6 +516,11 @@ class MetadataManager:
                 ):
                     del self._option_cache[project_key][type_key]
                 if (
+                    project_key in self._field_type_cache
+                    and type_key in self._field_type_cache[project_key]
+                ):
+                    del self._field_type_cache[project_key][type_key]
+                if (
                     project_key in self._field_last_loaded
                     and type_key in self._field_last_loaded[project_key]
                 ):
@@ -512,13 +529,22 @@ class MetadataManager:
             # 在锁内再次检查，避免重复加载
             if project_key not in self._field_cache:
                 self._field_cache[project_key] = {}
+                self._field_key_to_name_cache[project_key] = {}
                 self._option_cache[project_key] = {}
 
             if type_key in self._field_cache[project_key]:
                 return
 
+            # 确保反向映射缓存结构存在
+            if project_key not in self._field_key_to_name_cache:
+                self._field_key_to_name_cache[project_key] = {}
+            if project_key not in self._field_type_cache:
+                self._field_type_cache[project_key] = {}
+
             # 准备临时字典
-            temp_field_map = {}
+            temp_field_map = {}  # field_name/alias -> field_key
+            temp_field_key_to_name = {}  # field_key -> field_name (反向映射)
+            temp_field_type_map = {}  # field_key -> field_type_key (字段类型映射)
             temp_option_map = {}
             temp_role_map = {}
 
@@ -526,13 +552,18 @@ class MetadataManager:
             fields = await self.field_api.get_all_fields(project_key, type_key)
 
             for f in fields:
-                f_name = f.get("field_name")
+                f_name = f.get("field_name", "").strip() if f.get("field_name") else None
                 f_key = f.get("field_key")
-                f_alias = f.get("field_alias")
+                f_alias = f.get("field_alias", "").strip() if f.get("field_alias") else None
+                f_type = f.get("field_type_key")
 
                 if f_name and f_key:
                     # 存储 field_name -> field_key
                     temp_field_map[f_name] = f_key
+
+                    # 存储 field_key -> field_name (反向映射，优先使用 field_name)
+                    if f_key not in temp_field_key_to_name:
+                        temp_field_key_to_name[f_key] = f_name
 
                     # 也存储 alias -> field_key
                     if f_alias:
@@ -541,6 +572,10 @@ class MetadataManager:
                     logger.debug(
                         f"Cache set: field_name='{f_name}' -> field_key='{f_key}'"
                     )
+
+                # 缓存字段类型
+                if f_key and f_type:
+                    temp_field_type_map[f_key] = f_type
 
                 # 缓存选项
                 options = f.get("options", [])
@@ -575,6 +610,10 @@ class MetadataManager:
 
             # 原子性更新缓存
             self._field_cache[project_key][type_key] = temp_field_map
+            self._field_key_to_name_cache[project_key][type_key] = (
+                temp_field_key_to_name
+            )
+            self._field_type_cache[project_key][type_key] = temp_field_type_map
             self._option_cache[project_key][type_key] = temp_option_map
 
             # 更新角色缓存
@@ -613,8 +652,26 @@ class MetadataManager:
             logger.debug(f"Cache hit: field_name='{field_name}'")
             return field_map[field_name]
 
+        # 1.5 模糊匹配: 去除首尾空白字符后匹配
+        # 场景: 字段名为 "Wi-Fi Frequency\n"，用户输入 "Wi-Fi Frequency"
+        target_stripped = field_name.strip()
+        for cached_name, cached_key in field_map.items():
+            if cached_name.strip() == target_stripped:
+                logger.info(
+                    f"Fuzzy match field name: '{field_name}' -> '{cached_name}' (key={cached_key})"
+                )
+                return cached_key
+
         # 2. 检查是否本身就是 Key
         if field_name in field_map.values():
+            return field_name
+
+        # 3. 兜底策略: 如果看起来像 field_key，且不在映射中，允许直接使用
+        # 这用于处理某些 API 未返回但在元数据中存在的隐藏字段
+        if field_name.startswith("field_"):
+            logger.warning(
+                f"Field '{field_name}' not found in metadata map, using as direct key (bypass)"
+            )
             return field_name
 
         available_fields = list(field_map.keys())[:10]
@@ -636,70 +693,130 @@ class MetadataManager:
         await self._ensure_field_cache(project_key, type_key)
         return self._field_cache[project_key].get(type_key, {}).copy()
 
+    async def get_field_name(
+        self, project_key: str, type_key: str, field_key: str
+    ) -> Optional[str]:
+        """
+        根据字段 Key 获取 Field Name
+
+        Args:
+            project_key: 项目空间 Key
+            type_key: 工作项类型 Key
+            field_key: 字段 Key
+
+        Returns:
+            字段名称，如果未找到则返回 None
+        """
+        await self._ensure_field_cache(project_key, type_key)
+        field_key_to_name = self._field_key_to_name_cache.get(project_key, {}).get(
+            type_key, {}
+        )
+        return field_key_to_name.get(field_key)
+
+    async def get_field_type(
+        self, project_key: str, type_key: str, field_key: str
+    ) -> Optional[str]:
+        """
+        根据字段 Key 获取 Field Type
+
+        Args:
+            project_key: 项目空间 Key
+            type_key: 工作项类型 Key
+            field_key: 字段 Key
+
+        Returns:
+            字段类型（如 "select", "multi_select", "bool"），如果未找到则返回 None
+        """
+        await self._ensure_field_cache(project_key, type_key)
+        field_type_map = self._field_type_cache.get(project_key, {}).get(type_key, {})
+        return field_type_map.get(field_key)
+
     # ========== L4: Option ==========
 
     def _fuzzy_match_option(
         self, target_label: str, option_map: Dict[str, str]
     ) -> Optional[str]:
         """
-        模糊匹配选项（通用逻辑）
+        模糊匹配选项（增强版）
 
         策略:
-        1. 归一化完全匹配: 去除空格、转小写后比较
-           - "32 GB" == "32gb"
-        2. 单位自动补全: 识别 g/m/t/k 结尾，尝试补全为 gb/mb/tb/kb
-           - "32g" -> "32gb"
-           - "1.5t" -> "1.5tb"
-        3. 唯一包含匹配: 如果输入仅被唯一一个选项包含，则视为匹配
-           - "32" -> "32 GB" (如果没有 32 MB)
-
-        Args:
-            target_label: 目标标签（用户输入）
-            option_map: 选项映射 {label: value}
-
-        Returns:
-            匹配到的 option value，未匹配到返回 None
+        1. 归一化完全匹配: 去除首尾空格、转小写、去除空格后比较
+        2. 符号归一化匹配: 统一中英文括号、逗号等符号差异
+        3. 极限归一化匹配: 移除所有非字母数字字符（包括符号、空格），仅保留核心字符进行比较
+        4. 单位自动补全: 识别 g/m/t/k 结尾，尝试补全为 gb/mb/tb/kb
+        5. 唯一包含匹配: 如果输入是选项的子串（且无歧义），则匹配
         """
         if not target_label:
             return None
 
-        target_norm = target_label.lower().replace(" ", "")
+        t_lower = target_label.lower().strip()
+        t_norm = t_lower.replace(" ", "")
 
         # 1. 归一化完全匹配
         for label, value in option_map.items():
-            label_norm = label.lower().replace(" ", "")
-            if target_norm == label_norm:
+            label_norm = label.lower().strip().replace(" ", "")
+            if t_norm == label_norm:
                 logger.info(f"Fuzzy match (normalized): '{target_label}' -> '{label}'")
                 return value
 
-        # 2. 单位自动补全 (针对存储/流量等带单位场景)
-        # 检查是否以单字母单位结尾 (g, m, k, t, p)
-        if target_norm and target_norm[-1] in "gmktp":
-            target_with_b = target_norm + "b"
+        # 2. 符号归一化匹配 (统一中英文括号、度数符号等)
+        def normalize_symbols(s: str) -> str:
+            import re
+            # 替换常见的符号差异
+            replacements = {
+                "（": "(", "）": ")",
+                "，": ",", "；": ";",
+                "：": ":", "°": "", "deg": ""
+            }
+            # 先转小写并去除所有类型的空白字符（包括 \xa0, \u200b 等）
+            res = s.lower()
+            res = re.sub(r'[\s\u00A0\u2000-\u200B\u202F\u205F\u3000]+', '', res)
+
+            for old, new in replacements.items():
+                res = res.replace(old, new)
+            return res
+
+        t_sym_norm = normalize_symbols(t_lower)
+        for label, value in option_map.items():
+            if t_sym_norm == normalize_symbols(label):
+                logger.info(f"Fuzzy match (symbol normalized): '{target_label}' -> '{label}'")
+                return value
+
+        # 3. 极限归一化匹配 (仅保留字符)
+        import re
+        def clean_all(s: str) -> str:
+            return re.sub(r'[^\w\u4e00-\u9fa5]', '', s).lower()
+
+        t_clean = clean_all(t_lower)
+        if t_clean: # 防止输入全是符号
             for label, value in option_map.items():
-                label_norm = label.lower().replace(" ", "")
+                if t_clean == clean_all(label):
+                    logger.info(f"Fuzzy match (extreme cleaned): '{target_label}' -> '{label}'")
+                    return value
+
+        # 4. 单位自动补全
+        if t_norm and t_norm[-1] in "gmktp":
+            target_with_b = t_norm + "b"
+            for label, value in option_map.items():
+                label_norm = label.lower().strip().replace(" ", "")
                 if target_with_b == label_norm:
                     logger.info(f"Fuzzy match (unit fix): '{target_label}' -> '{label}'")
                     return value
 
-        # 3. 唯一包含匹配
+        # 5. 唯一包含匹配
         candidates = []
         for label, value in option_map.items():
-            label_norm = label.lower().replace(" ", "")
+            label_norm = label.lower().strip().replace(" ", "")
             # 检查 target 是否是 label 的子串
-            if target_norm in label_norm:
+            if t_norm in label_norm or label_norm in t_norm:
                 candidates.append((label, value))
 
         if len(candidates) == 1:
             matched_label, matched_value = candidates[0]
-            logger.info(
-                f"Fuzzy match (unique substring): '{target_label}' -> '{matched_label}'"
-            )
+            logger.info(f"Fuzzy match (unique substring): '{target_label}' -> '{matched_label}'")
             return matched_value
         elif len(candidates) > 1:
-            logger.warning(
-                f"Ambiguous fuzzy match for '{target_label}': {[c[0] for c in candidates]}"
-            )
+            logger.warning(f"Ambiguous fuzzy match for '{target_label}': {[c[0] for c in candidates]}")
 
         return None
 
@@ -724,9 +841,7 @@ class MetadataManager:
         await self._ensure_field_cache(project_key, type_key)
 
         option_map = (
-            self._option_cache.get(project_key, {})
-            .get(type_key, {})
-            .get(field_key, {})
+            self._option_cache.get(project_key, {}).get(type_key, {}).get(field_key, {})
         )
 
         # 1. 精确匹配标签
@@ -744,6 +859,12 @@ class MetadataManager:
             return fuzzy_value
 
         available_options = list(option_map.keys())
+        logger.error(
+            "Option '%s' not found for field_key '%s'. Available options: %s",
+            option_label,
+            field_key,
+            available_options,
+        )
         raise Exception(f"选项 '{option_label}' 未找到。可用选项: {available_options}")
 
     async def list_options(
@@ -799,6 +920,13 @@ class MetadataManager:
         # 2. 检查是否本身就是 Key
         if role_name in role_map.values():
             return role_name
+
+        # 3. 模糊匹配 (新增)
+        role_norm = role_name.strip().lower()
+        for name, key in role_map.items():
+            if role_norm == name.strip().lower():
+                logger.info(f"Fuzzy match role: '{role_name}' -> '{name}'")
+                return key
 
         available_roles = list(role_map.keys())
         raise Exception(f"角色 '{role_name}' 未找到。可用角色: {available_roles}")

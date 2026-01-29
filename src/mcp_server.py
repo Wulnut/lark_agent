@@ -27,15 +27,16 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
-
+from typing import Optional, List, Any, Callable, TypeVar, cast
+import functools
 import httpx
 
 from mcp.server.fastmcp import FastMCP
 
 from src.core.config import settings
-from src.providers.project.managers import MetadataManager
-from src.providers.project.work_item_provider import WorkItemProvider
+from src.core.context import user_key_context
+from src.providers.lark_project.managers import MetadataManager
+from src.providers.lark_project.work_item_provider import WorkItemProvider
 
 
 def _mask_sensitive(value: str, visible_chars: int = 4) -> str:
@@ -229,6 +230,24 @@ logger.debug("Logger initialized for module: %s", __name__)
 mcp = FastMCP("Lark")
 
 
+T = TypeVar("T")
+
+
+def with_user_context(func: Callable[..., Any]) -> Callable[..., Any]:
+    """装饰器：将参数中的 user_key 设置到全局上下文中"""
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        user_key = kwargs.get("user_key")
+        token = user_key_context.set(user_key)
+        try:
+            return await func(*args, **kwargs)
+        finally:
+            user_key_context.reset(token)
+
+    return wrapper
+
+
 def _is_project_key_format(identifier: str) -> bool:
     """判断是否为 project_key 格式（以 'project_' 开头）"""
     return bool(identifier and identifier.startswith("project_"))
@@ -318,12 +337,16 @@ def _create_provider(
 
 
 @mcp.tool()
-async def list_projects() -> str:
+@with_user_context
+async def list_projects(user_key: Optional[str] = None) -> str:
     """
     列出所有可用的飞书项目空间。
 
     当你不知道项目的 project_key 时，先调用此工具获取项目列表。
     返回的列表包含项目名称和对应的 project_key。
+
+    Args:
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         JSON 格式的项目列表，格式为 {project_name: project_key}。
@@ -363,6 +386,7 @@ async def list_projects() -> str:
 
 
 @mcp.tool()
+@with_user_context
 async def create_task(
     name: str,
     project: Optional[str] = None,
@@ -370,6 +394,7 @@ async def create_task(
     priority: str = "P2",
     description: str = "",
     assignee: Optional[str] = None,
+    user_key: Optional[str] = None,
 ) -> str:
     """
     在指定项目中创建新的工作项（任务/Issue）。
@@ -383,11 +408,12 @@ async def create_task(
                 - 项目名称（如 "SR6D2VA-7552-Lark"）
                 - project_key（如 "project_xxx"）
                 如不指定，则使用环境变量 FEISHU_PROJECT_KEY 配置的默认项目。
-        work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等。
+        work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等名。
                        如不指定，默认使用项目中的第一个可用类型。
         priority: 优先级，可选值: P0(最高), P1, P2(默认), P3(最低)。
         description: 工作项描述，支持纯文本。
         assignee: 负责人的姓名或邮箱。如不指定则为空。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         成功时返回 "创建成功，Issue ID: xxx"。
@@ -447,6 +473,7 @@ async def create_task(
 
 
 @mcp.tool()
+@with_user_context
 async def get_tasks(
     project: Optional[str] = None,
     work_item_type: Optional[str] = None,
@@ -457,6 +484,7 @@ async def get_tasks(
     related_to: Optional[str] = None,
     page_num: int = 1,
     page_size: int = 50,
+    user_key: Optional[str] = None,
 ) -> str:
     """
     获取项目中的工作项列表（支持全量获取或按条件过滤）。
@@ -487,6 +515,7 @@ async def get_tasks(
                    例如：related_to="SG06VA1" 或 related_to=6288163810
         page_num: 页码，从 1 开始（默认 1）。
         page_size: 每页数量（默认 50，最大 100）。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         JSON 格式的工作项列表，包含 id, name, status, priority, owner。
@@ -631,10 +660,12 @@ async def get_tasks(
 
 
 @mcp.tool()
+@with_user_context
 async def get_task_detail(
     issue_id: int,
     project: Optional[str] = None,
     work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
 ) -> str:
     """
     获取单个工作项的完整详情。
@@ -651,6 +682,7 @@ async def get_task_detail(
                 如不指定，则使用环境变量 FEISHU_PROJECT_KEY 配置的默认项目。
         work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等。
                        如不指定，默认使用项目中的第一个可用类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         JSON 格式的完整工作项详情。
@@ -669,7 +701,7 @@ async def get_task_detail(
     """
     try:
         logger.info(
-            "Getting task detail: project=%s, work_item_type=%s, issue_id=%d",
+            "Getting task detail: project=%s, work_item_type=%s, issue_id=%s",
             _mask_project(project),
             work_item_type,
             issue_id,
@@ -677,11 +709,11 @@ async def get_task_detail(
         provider = _create_provider(project, work_item_type)
         detail = await provider.get_readable_issue_details(issue_id)
 
-        logger.info("Retrieved task detail successfully: issue_id=%d", issue_id)
+        logger.info("Retrieved task detail successfully: issue_id=%s", issue_id)
         return json.dumps(detail, ensure_ascii=False, indent=2)
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(
-            "Failed to get task detail: issue_id=%d, error=%s",
+            "Failed to get task detail: issue_id=%s, error=%s",
             issue_id,
             e,
             exc_info=True,
@@ -692,7 +724,7 @@ async def get_task_detail(
         if _should_expose_error(error_msg):
             return f"获取工作项详情失败: {_mask_sensitive_in_error(error_msg)}"
         logger.critical(
-            "Unexpected error getting task detail: issue_id=%d, error=%s",
+            "Unexpected error getting task detail: issue_id=%s, error=%s",
             issue_id,
             e,
             exc_info=True,
@@ -701,6 +733,7 @@ async def get_task_detail(
 
 
 @mcp.tool()
+@with_user_context
 async def update_task(
     issue_id: int,
     project: Optional[str] = None,
@@ -712,62 +745,53 @@ async def update_task(
     assignee: Optional[str] = None,
     field_name: Optional[str] = None,
     field_value: Optional[str] = None,
+    fields_json: Optional[str] = None,
+    user_key: Optional[str] = None,
 ) -> str:
     """
     更新工作项的字段。
 
-    可以同时更新多个字段，只需提供要更新的字段值即可。
-    未提供的字段将保持不变。
-
-    支持两种更新方式：
-    1. 使用便捷参数更新常用字段（name, priority, description, status, assignee）
-    2. 使用 field_name + field_value 更新任意自定义字段
-
-    系统会自动处理：
-    - 字段名称到 field_key 的转换
-    - 选项类型字段的 label 到 value 的转换（如 "32 GB" -> 对应的选项值）
+    可以同时更新多个字段，这些字段可以通过 fields_json 一次性传入。
 
     Args:
         issue_id: 要更新的工作项 ID。
-        project: 项目标识符（可选）。可以是项目名称或 project_key。
-                如不指定，则使用环境变量 FEISHU_PROJECT_KEY 配置的默认项目。
-        work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等。
-                       如不指定，默认使用项目中的第一个可用类型。
+        project: 项目标识符（可选）。
+        work_item_type: 工作项类型名称（可选）。
         name: 新标题（可选）。
-        priority: 新优先级（可选），如 "P0", "P1" 等。
+        priority: 新优先级（可选）。
         description: 新描述（可选）。
-        status: 新状态（可选），如 "进行中", "已完成" 等。
-        assignee: 新负责人（可选），姓名或邮箱。
-        field_name: 自定义字段名称（可选），如 "DDR 容量"、"芯片型号" 等。
-                   需要与 field_value 配合使用。
-        field_value: 自定义字段值（可选），如 "32 GB"、"MT7981" 等。
-                    对于选项类型字段，可以直接使用选项的显示名称（label）。
+        status: 新状态（可选）。
+        assignee: 新负责人（可选）。
+        field_name: 单个自定义字段名称（可选）。
+        field_value: 单个自定义字段值（可选）。
+        fields_json: JSON 格式的字段字典（可选），用于批量更新多个自定义字段。
+                     例如: '{"Soc Vendor": "Amlogic", "DDR 大小": "128MB"}'
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         成功时返回 "更新成功"。
-        失败时返回错误信息。
-
-    Examples:
-        # 将任务标记为进行中（使用默认项目）
-        update_task(issue_id=12345, status="进行中")
-
-        # 提升任务优先级并更换负责人
-        update_task(issue_id=12345, priority="P0", assignee="李四")
-
-        # 更新自定义字段（如 DDR 容量）
-        update_task(issue_id=12345, work_item_type="项目管理", field_name="DDR 容量", field_value="32 GB")
-
-        # 更新多个自定义字段（需要多次调用）
-        update_task(issue_id=12345, field_name="芯片型号", field_value="MT7981")
     """
     try:
         # 构建 extra_fields
-        extra_fields = None
+        extra_fields = {}
         if field_name and field_value is not None:
-            extra_fields = {field_name: field_value}
+            extra_fields[field_name] = field_value
+
+        if fields_json:
+            try:
+                json_fields = json.loads(fields_json)
+                if isinstance(json_fields, dict):
+                    extra_fields.update(json_fields)
+                else:
+                    return "更新失败: fields_json 必须是 JSON 对象"
+            except json.JSONDecodeError:
+                return "更新失败: fields_json 格式错误"
+
+        if not extra_fields:
+            extra_fields = None
 
         logger.info(
-            "Updating task: project=%s, work_item_type=%s, issue_id=%d, has_name=%s, priority=%s, status=%s, has_assignee=%s, extra_field=%s",
+            "Updating task: project=%s, work_item_type=%s, issue_id=%s, has_name=%s, priority=%s, status=%s, has_assignee=%s, extra_fields_keys=%s",
             _mask_project(project),
             work_item_type,
             issue_id,
@@ -775,10 +799,10 @@ async def update_task(
             priority,
             status,
             bool(assignee),
-            field_name,
+            list(extra_fields.keys()) if extra_fields else [],
         )
         provider = _create_provider(project, work_item_type)
-        await provider.update_issue(
+        results = await provider.update_issue(
             issue_id=issue_id,
             name=name,
             priority=priority,
@@ -787,36 +811,224 @@ async def update_task(
             assignee=assignee,
             extra_fields=extra_fields,
         )
-        logger.info("Task updated successfully: issue_id=%d", issue_id)
-        return f"更新成功，Issue ID: {issue_id}"
+
+        if not results:
+            return _error_response("更新任务", "未提供任何有效字段进行更新", "ERR_NO_FIELDS")
+
+        # 统计结果
+        success_count = sum(1 for r in results if r.success)
+        total_count = len(results)
+
+        # 序列化结果以便返回
+        serialized_results = [
+            {"field": r.field_name, "success": r.success, "message": r.message}
+            for r in results
+        ]
+
+        if success_count == total_count:
+            logger.info("Task updated successfully: issue_id=%s", issue_id)
+            return _success_response(
+                data={"issue_id": issue_id, "results": serialized_results},
+                message=f"更新成功，共 {total_count} 个字段",
+            )
+        elif success_count > 0:
+            logger.warning(
+                "Task partially updated: issue_id=%s, %d/%d success",
+                issue_id,
+                success_count,
+                total_count,
+            )
+            return _success_response(
+                data={"issue_id": issue_id, "results": serialized_results},
+                message=f"部分更新成功: {success_count}/{total_count} 个字段成功",
+            )
+        else:
+            logger.error("Task update failed: issue_id=%s, all fields failed", issue_id)
+            # 如果全部失败，构建更详细的错误信息
+            fail_reasons = "; ".join([r.message for r in results if not r.success])
+            return _error_response(
+                operation="更新任务",
+                error_msg=f"更新全部失败 (0/{total_count} 成功): {fail_reasons}",
+                error_code="ERR_UPDATE_FAILED",
+            )
     except (httpx.HTTPError, ValueError, KeyError) as e:
+        error_detail = str(e)
+        # 尝试提取更详细的 HTTP 错误响应体
+        if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+            try:
+                err_json = e.response.json()
+                if isinstance(err_json, dict) and "err_msg" in err_json:
+                    # 飞书通常返回 {"err_msg": "...", "err": {"msg": "..."}}
+                    api_msg = err_json.get("err_msg")
+                    inner_msg = err_json.get("err", {}).get("msg")
+                    full_msg = f"{api_msg}: {inner_msg}" if inner_msg else api_msg
+                    error_detail = f"{e}; API Error: {full_msg}"
+                else:
+                    error_detail = f"{e}; Body: {e.response.text}"
+            except Exception:
+                # 如果解析失败，保留原始错误
+                pass
+        elif isinstance(e, ValueError) and "无法更新字段" in str(e):
+            # 如果是自定义字段解析失败，提取更简洁的错误信息
+            match = re.search(r"无法更新字段 '(.*?)': (.*)", str(e))
+            if match:
+                field_name = match.group(1)
+                reason = match.group(2)
+                error_detail = f"无法更新字段 '{field_name}': {reason}"
+            else:
+                error_detail = str(e)
+
         logger.error(
-            "Failed to update task: project=%s, issue_id=%d, error=%s",
+            "Failed to update task: project=%s, issue_id=%s, error=%s",
             _mask_project(project),
             issue_id,
-            str(e), # 只记录异常消息，不记录完整堆栈，或者确保 e 本身不包含敏感信息
+            error_detail,
             exc_info=True,
         )
-        return f"更新失败: {str(e)}"
+        return f"更新失败: {error_detail}"
     except Exception as e:
         error_msg = _extract_safe_error_message(e)
         if _should_expose_error(error_msg):
             return f"更新失败: {_mask_sensitive_in_error(error_msg)}"
         logger.critical(
-            "Unexpected error updating task: project=%s, issue_id=%d, error=%s",
+            "Unexpected error updating task: project=%s, issue_id=%s, error=%s",
             _mask_project(project),
             issue_id,
-            _extract_safe_error_message(e), # 使用安全的错误消息
+            _extract_safe_error_message(e),
             exc_info=True,
         )
         return "更新失败: 系统内部错误"
 
 
 @mcp.tool()
+@with_user_context
+async def batch_update_tasks(
+    issue_ids: Optional[List[int]] = None,
+    issue_id: Optional[int] = None,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    name: Optional[str] = None,
+    priority: Optional[str] = None,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+    assignee: Optional[str] = None,
+    field_name: Optional[str] = None,
+    field_value: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """批量更新工作项字段（支持单个或多个工作项）。
+
+    Args:
+        issue_ids: 要更新的工作项 ID 列表。
+        issue_id: 单个工作项 ID（与 issue_ids 二选一，方便单项操作）。
+        project: 项目标识符（名称或 Key）。
+        work_item_type: 工作项类型名称。
+        name: 新标题。
+        priority: 新优先级（如 P0, P1, P2）。
+        description: 新描述。
+        status: 新状态。
+        assignee: 新负责人（姓名或邮箱）。
+        field_name: 自定义字段名称，需配合 field_value 使用。
+        field_value: 自定义字段值。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
+
+    Returns:
+        JSON 格式结果，包含 success 状态和后台任务 ID 列表。
+    """
+    try:
+        # 合并并去重（保持插入顺序）
+        combined = (issue_ids or []) + ([issue_id] if issue_id is not None else [])
+        target_ids = list(dict.fromkeys(combined))
+
+        if not target_ids:
+            return json.dumps(
+                {"success": False, "error": "必须提供 issue_ids 或 issue_id"},
+                ensure_ascii=False,
+            )
+
+        extra_fields = (
+            {field_name: field_value}
+            if field_name and field_value is not None
+            else None
+        )
+
+        logger.info(
+            "Batch updating tasks: project=%s, count=%d, fields=[name=%s, priority=%s, status=%s, assignee=%s]",
+            _mask_project(project),
+            len(target_ids),
+            bool(name),
+            priority,
+            status,
+            bool(assignee),
+        )
+
+        provider = _create_provider(project, work_item_type)
+        results = await provider.batch_update_issues(
+            issue_ids=target_ids,
+            name=name,
+            priority=priority,
+            description=description,
+            status=status,
+            assignee=assignee,
+            extra_fields=extra_fields,
+        )
+
+        logger.info("Batch update completed: %d results", len(results))
+
+        # 序列化 UpdateResult 对象为字典
+        serialized_results = [
+            {
+                "success": r.success,
+                "issue_id": r.issue_id,
+                "field_name": r.field_name,
+                "message": r.message,
+            }
+            for r in results
+        ]
+
+        # 统计成功操作数
+        success_count = sum(1 for r in results if r.success)
+
+        return json.dumps(
+            {
+                "success": True,
+                "message": f"批量更新完成，成功 {success_count}/{len(results)} 个操作",
+                "data": {
+                    "results": serialized_results,
+                    "issue_count": len(target_ids),
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        logger.error(
+            "Failed to batch update tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
+        )
+        return f"批量更新失败: {str(e)}"
+    except Exception as e:
+        error_msg = _extract_safe_error_message(e)
+        if _should_expose_error(error_msg):
+            return f"批量更新失败: {_mask_sensitive_in_error(error_msg)}"
+        logger.critical(
+            "Unexpected error batch updating tasks: project=%s, error=%s",
+            _mask_project(project),
+            e,
+            exc_info=True,
+        )
+        return "批量更新失败: 系统内部错误"
+
+
+@mcp.tool()
+@with_user_context
 async def get_task_options(
     field_name: str,
     project: Optional[str] = None,
     work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
 ) -> str:
     """
     获取字段的可用选项列表。
@@ -830,6 +1042,7 @@ async def get_task_options(
                 如不指定，则使用环境变量 FEISHU_PROJECT_KEY 配置的默认项目。
         work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理"、"项目管理" 等。
                        如不指定，默认使用项目中的第一个可用类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
 
     Returns:
         JSON 格式的选项列表，格式为 {label: value}。

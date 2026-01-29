@@ -13,7 +13,7 @@ MetadataManager 测试模块
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from src.providers.project.managers.metadata_manager import MetadataManager
+from src.providers.lark_project.managers.metadata_manager import MetadataManager
 
 
 @pytest.fixture(autouse=True)
