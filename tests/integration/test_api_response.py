@@ -8,12 +8,15 @@ import pytest
 
 from src.providers.lark_project.work_item_provider import WorkItemProvider
 from src.core.project_client import get_project_client
+from tests.integration.conftest import TEST_PROJECT_KEY, skip_without_credentials
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@skip_without_credentials
 async def test_api_response():
     """测试API响应格式"""
-    provider = WorkItemProvider(work_item_type_name="Issue管理")
+    provider = WorkItemProvider(project_key=TEST_PROJECT_KEY, work_item_type_name="Issue管理")
     client = get_project_client()
 
     print("=== 测试API响应格式 ===")
