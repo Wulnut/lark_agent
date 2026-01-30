@@ -1,392 +1,201 @@
-# Feishu Agent (MCP Server)
+# Lark Agent (MCP Server)
 
-[![CI](https://github.com/Wulnut/feishu_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulnut/feishu_agent/actions/workflows/ci.yml)
+[![CI](https://github.com/Wulnut/lark_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Wulnut/lark_agent/actions/workflows/ci.yml)
 
-这是一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 构建的飞书 (Lark/Feishu) 智能代理服务。它允许 LLM (如 Claude, Cursor) 通过标准协议直接调用飞书项目 (Feishu Project) 和飞书开放平台的能力。
+这是一个基于 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) 构建的飞书 (Lark/Feishu) 智能代理服务。它采用 **双模运行 (Dual-Mode)** 架构，既是一个标准 MCP Server，也通过 FastAPI 暴露 HTTP API，完美支持 AI 助手 (Cursor/Claude) 调用和自动化工作流 (n8n) 集成。
 
-## ✨ 功能特性
+## ✨ 核心特性
 
-*   **MCP 协议支持**: 基于 `FastMCP` 实现，支持标准 MCP 工具调用。
-*   **飞书项目集成**:
-    *   创建/更新/删除工作项 (Tasks/Issues/Bugs)。
-    *   高级过滤查询（按状态、优先级、负责人）。
-    *   获取字段可用选项。
-*   **架构设计**:
-    *   **Async First**: 全异步架构，基于 `asyncio` 和 `httpx`。
-    *   **Provider 模式**: 业务逻辑与底层 API 解耦。
-    *   **自动重试**: 网络错误和 5xx 服务端错误自动重试。
-    *   **零硬编码**: 所有字段 Key/Value 通过名称动态解析。
+* **双模运行**:
+  * **MCP Mode**: 运行在主进程，通过 Stdio 协议与 Cursor、Claude Desktop 等 IDE/客户端无缝集成。
+  * **HTTP Mode**: 运行在后台子进程，通过 FastAPI 暴露标准的 RESTful 接口，适配 n8n、Zapier 等 Webhook 触发器。
+* **飞书项目全集成**: 支持跨项目的任务 CRUD、高级过滤查询、字段元数据解析。
+* **企业级架构**:
+  * **Async First**: 全异步架构，基于 `asyncio` 和 `httpx` 实现极高性能。
+  * **Metadata Manager**: 具备 5 层缓存机制，自动解析飞书项目中的复杂字段 Key/Value，实现**零硬编码**。
+  * **Provider 模式**: 业务逻辑与底层飞书 SDK/API 彻底解耦，易于扩展。
+  * **自动重试 & 脱敏**: 完善的错误重试机制（指数退避）及敏感信息脱敏保护。
+* **多重认证支持**: 支持 Static Token（快速上手）和 Plugin Authentication（企业生产推荐）。
+
+---
+
+## 🏗️ 系统架构
+
+```mermaid
+flowchart TD
+    subgraph Clients ["客户端层"]
+        CURSOR["Cursor / Claude (IDE)"]
+        N8N["n8n / Workflows (HTTP)"]
+    end
+
+    subgraph Agent ["Lark Agent (Dual-Mode)"]
+        direction TB
+        MAIN["main.py (Process Manager)"]
+        
+        subgraph MCP_PROC ["MCP 进程 (Main)"]
+            MCP_STDIO["FastMCP (Stdio Transport)"]
+            TOOLS["MCP Tools (Python Functions)"]
+        end
+        
+        subgraph HTTP_PROC ["HTTP 进程 (Child)"]
+            FASTAPI["FastAPI (Port 8002)"]
+            WRAPPER["Call Tool Wrapper"]
+        end
+        
+        MAIN --> MCP_PROC
+        MAIN --> HTTP_PROC
+        MCP_STDIO --> TOOLS
+        FASTAPI --> WRAPPER
+        WRAPPER --> TOOLS
+    end
+
+    subgraph Core ["能力核心层"]
+        PROVIDER["WorkItemProvider"]
+        META["MetadataManager (L1-L5 Cache)"]
+        AUTH["AuthManager (Token Cache)"]
+    end
+
+    TOOLS --> PROVIDER
+    PROVIDER --> META
+    PROVIDER --> AUTH
+    AUTH --> FEISHU_API["Feishu / Lark API"]
+```
+
+---
 
 ## 🛠️ 可用工具 (MCP Tools)
 
-| 工具名 | 功能描述 | 示例用法 |
-|--------|---------|---------|
-| `list_projects` | 列出所有可用项目 | "有哪些可用的飞书项目？" |
-| `create_task` | 创建新的工作项 | "帮我创建一个 P0 优先级的 Bug：登录页面崩溃" |
-| `get_tasks` | 获取工作项列表（支持过滤） | "查看当前有哪些进行中的任务" |
-| `get_task_detail` | 获取单个工作项完整详情 | "查看任务 12345 的详细信息" |
-| `update_task` | 更新工作项 | "把任务 12345 的状态改为已完成" |
-| `get_task_options` | 获取字段可用选项 | "状态字段有哪些可选值？" |
+| 工具名 | 功能描述 | 核心业务场景 |
+|--------|---------|-------------|
+| `list_projects` | 列出所有可用项目及 Key | 初始探索、查找项目 ID |
+| `create_task` | 创建单条工作项 | 快速记录 Bug、新增需求 |
+| `get_tasks` | 全方位过滤查询工作项 | 查看我的任务、列出 P0 Bug |
+| `get_task_detail` | 获取工作项完整详情 | 查看任务描述、属性详情 |
+| `update_task` | 更新单个工作项字段 | 修改状态、指派负责人 |
+| `batch_update_tasks` | **[NEW]** 批量更新多个工作项 | 批量结单、批量改优先级 |
+| `get_task_options` | 查询字段可用选项 | 确认状态流转、查看优先级列表 |
 
-### 工具详细说明
-
-#### 1. create_task - 创建工作项
-
-```
-参数:
-  - name: 工作项标题 (必填)
-  - project: 项目标识符（可选，支持项目名称或 project_key）
-  - work_item_type: 工作项类型（可选），如 "需求管理"、"Issue管理"
-  - priority: 优先级，可选 P0/P1/P2/P3，默认 P2
-  - description: 描述
-  - assignee: 负责人（姓名或邮箱）
-
-返回: 创建成功的 Issue ID
-```
-
-**使用示例：**
-```
-用户: 帮我创建一个任务"修复首页加载慢的问题"，优先级 P1，指派给张三
-AI: 调用 create_task(name="修复首页加载慢的问题", priority="P1", assignee="张三")
-```
-
-#### 2. get_tasks - 获取工作项列表
-
-```
-参数:
-  - project: 项目标识符（可选）
-  - work_item_type: 工作项类型（可选）
-  - name_keyword: 名称关键词搜索（推荐）
-  - status: 状态过滤，多个用逗号分隔，如 "待处理,进行中"
-  - priority: 优先级过滤，多个用逗号分隔，如 "P0,P1"
-  - owner: 负责人过滤（姓名或邮箱）
-  - related_to: 关联工作项 ID 或名称
-  - page_num: 页码，从 1 开始
-  - page_size: 每页数量，默认 50
-
-返回: JSON 格式的工作项列表
-```
-
-**使用示例：**
-```
-用户: 找出所有 P0 优先级的待处理任务
-AI: 调用 get_tasks(status="待处理", priority="P0")
-
-用户: 李四负责的进行中任务有哪些
-AI: 调用 get_tasks(status="进行中", owner="李四")
-
-用户: 搜索包含 "登录" 关键词的任务
-AI: 调用 get_tasks(name_keyword="登录")
-```
-
-#### 3. get_task_detail - 获取工作项详情
-
-```
-参数:
-  - issue_id: 工作项 ID (必填)
-  - project: 项目标识符（可选）
-  - work_item_type: 工作项类型（可选）
-
-返回: JSON 格式的完整工作项详情
-```
-
-**使用示例：**
-```
-用户: 查看任务 12345 的详细信息
-AI: 调用 get_task_detail(issue_id=12345)
-```
-
-#### 4. update_task - 更新工作项
-
-```
-参数:
-  - issue_id: 工作项 ID (必填)
-  - project: 项目标识符（可选）
-  - work_item_type: 工作项类型（可选）
-  - name: 新标题
-  - priority: 新优先级
-  - description: 新描述
-  - status: 新状态
-  - assignee: 新负责人
-
-返回: 更新成功消息
-```
-
-**使用示例：**
-```
-用户: 把任务 12345 的状态改为已完成
-AI: 调用 update_task(issue_id=12345, status="已完成")
-
-用户: 把任务 12345 的优先级提升到 P0，并转给王五
-AI: 调用 update_task(issue_id=12345, priority="P0", assignee="王五")
-```
-
-#### 5. get_task_options - 获取字段可用选项
-
-```
-参数:
-  - field_name: 字段名称，如 "status", "priority" (必填)
-  - project: 项目标识符（可选）
-  - work_item_type: 工作项类型（可选）
-
-返回: JSON 格式的选项列表
-```
-
-**使用示例：**
-```
-用户: 状态字段有哪些可选值
-AI: 调用 get_task_options(field_name="status")
- 返回: {"field": "status", "options": {"待处理": "opt_1", "进行中": "opt_2", "已完成": "opt_3"}}
-```
-
-### ✨ 可读性特性
-
-为了提升用户体验，本系统对工作项数据进行了智能可读性转换：
-
-1. **`get_tasks` 列表视图**：
-   - 自动提取负责人、状态、优先级等关键字段的可读标签
-   - 用户相关字段（负责人）显示为人名而非内部 ID
-   - 返回简化格式，节省 Token 消耗
-
-2. **`get_task_detail` 详情视图**：
-   - 返回完整的工作项详情，包含所有字段
-   - 自动转换用户字段为人名（负责人、创建者、更新者等）
-   - 在 `readable_fields` 字段中提供所有字段的可读版本
-   - 为常用字段提供顶级别名（`readable_owner`, `readable_creator` 等）
-
-3. **智能字段解析**：
-   - 自动处理多种字段格式（列表、字典、选项等）
-   - 支持复杂字段值的可读提取
-   - 保持原始数据完整，仅添加可读增强
-
-**示例对比**：
-- 原始数据：`"owner": [{"name": "张三", "user_key": "u_123"}]`
-- 可读版本：`"owner": "张三"` (在 `get_tasks` 中)
-- 增强详情：包含原始数据和 `"readable_owner": "张三"` (在 `get_task_detail` 中)
+---
 
 ## 🚀 快速开始
 
-### 方式一：通过 uv tool install（推荐，最简单）
+### 方式一：通过 `uv tool install`（推荐，最简单）
 
 ```bash
-# 安装
-uv tool install --from git+https://github.com/Wulnut/feishu_agent feishu-agent
+# 1. 安装
+uv tool install --from git+https://github.com/Wulnut/lark_agent lark-agent
 
-# 运行
-feishu-agent
+# 2. 配置环境变量 (见下方配置说明)
+# 3. 直接运行
+lark-agent
 ```
-
-安装后，`feishu-agent` 命令会自动添加到 PATH 中，可以直接使用。
 
 ### 方式二：从源码运行（开发模式）
 
-#### 前置要求
-
-*   [uv](https://github.com/astral-sh/uv) (推荐) 或 Python 3.11+
-*   Docker (可选，用于容器化开发)
-
-#### 1. 克隆仓库
-
 ```bash
-git clone https://github.com/Wulnut/feishu_agent.git
-cd feishu_agent
-```
+# 1. 克隆与进入目录
+git clone https://github.com/Wulnut/lark_agent.git && cd lark_agent
 
-#### 2. 环境配置
-
-创建 `.env` 文件并填写您的飞书凭证：
-
-```bash
-# 创建 .env 文件
-cat > .env << EOF
-LARK_APP_ID=your_app_id
-LARK_APP_SECRET=your_app_secret
-FEISHU_PROJECT_USER_TOKEN=your_token
-FEISHU_PROJECT_USER_KEY=your_user_key
-# 或使用 Plugin 方式（推荐）
-# FEISHU_PROJECT_PLUGIN_ID=your_plugin_id
-# FEISHU_PROJECT_PLUGIN_SECRET=your_plugin_secret
-EOF
-```
-
-#### 3. 安装依赖
-
-```bash
+# 2. 安装依赖并同步环境
 uv sync
-```
 
-#### 4. 启动服务
-
-```bash
+# 3. 运行服务
 uv run main.py
 ```
 
-服务启动后，将通过 `stdio` (标准输入输出) 进行通信。日志会输出到 `log/agent.log` 文件中。
+---
 
-可以使用 `tail -f log/agent.log` 实时查看运行日志。
+## ⚙️ 环境配置
 
-## 🔌 MCP 客户端配置
+在项目根目录创建 `.env` 文件：
 
-### Cursor IDE 配置
+```env
+# --- 飞书项目配置 (必须) ---
+FEISHU_PROJECT_USER_KEY=your_user_key
 
-在 Cursor 中配置 MCP server，编辑 `~/.cursor/mcp.json`（Linux/macOS）或 `%APPDATA%\Cursor\mcp.json`（Windows）。
+# 方案 A: 插件认证 (企业推荐，支持自动续期)
+FEISHU_PROJECT_PLUGIN_ID=your_plugin_id
+FEISHU_PROJECT_PLUGIN_SECRET=your_plugin_secret
 
-**如果使用 `uv tool install` 安装（推荐）：**
-```json
-{
-  "mcpServers": {
-    "feishu-agent": {
-      "command": "feishu-agent"
-    }
-  }
-}
+# 方案 B: 静态 Token (个人测试，有效期 24h)
+# FEISHU_PROJECT_USER_TOKEN=your_token
+
+# --- 飞书机器人配置 (可选，用于 IM 通讯) ---
+LARK_APP_ID=your_app_id
+LARK_APP_SECRET=your_app_secret
+
+# --- 系统配置 ---
+LOG_LEVEL=INFO
+FEISHU_PROJECT_KEY=默认项目KEY (可选)
 ```
 
-**如果从源码运行：**
-```json
-{
-  "mcpServers": {
-    "feishu-agent": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/path/to/feishu_agent",
-        "main.py"
-      ]
-    }
-  }
-}
-```
+---
 
-**配置说明：**
-*   推荐使用 `uv tool install` 方式，配置更简单
-*   如果从源码运行，需要确保 `uv` 已安装并在系统 PATH 中
-*   确保 `.env` 文件已正确配置飞书凭证（或设置环境变量）
-*   配置修改后需要重启 Cursor 才能生效
+## 🔌 客户端集成
 
-### Claude Desktop 配置
+### 1. Cursor IDE 配置
 
-在 Claude Desktop 中配置，编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或 `%APPDATA%\Claude\claude_desktop_config.json`（Windows）：
+编辑 `~/.cursor/mcp.json`：
 
 ```json
 {
   "mcpServers": {
-    "feishu-agent": {
-      "command": "feishu-agent"
-    }
-  }
-}
-
-{
-  "mcpServers": {
-    "feishu-agent": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/path/to/feishu_agent",
-        "main.py"
-      ]
+    "lark-agent": {
+      "command": "lark-agent"
     }
   }
 }
 ```
 
-**注意**：使用 `uv tool install` 安装后，需要确保 `~/.local/bin`（Linux/macOS）或 `%USERPROFILE%\.local\bin`（Windows）在 PATH 中。
+### 2. n8n / HTTP 调用
 
-### 使用方式
+服务启动后，HTTP 端口默认为 `8002`。
 
-配置完成后，在 Cursor 或 Claude Desktop 中可以直接通过自然语言调用飞书项目相关功能，例如：
+* **健康检查**: `GET http://localhost:8002/health`
+* **调用工具**: `POST http://localhost:8002/call_tool`
 
-*   "查询我的活跃工作项"
-*   "创建一个 P0 的紧急 Bug"
-*   "查看项目中所有待处理的任务"
-*   "把任务 12345 标记为已完成"
-*   "找出张三负责的所有 P0 任务"
+    ```json
+    {
+      "tool_name": "list_projects",
+      "parameters": {},
+      "user_key": "your_user_key"
+    }
+    ```
 
-MCP server 会自动处理这些请求并调用相应的飞书 API。
+---
 
-## 🧪 测试 (Testing)
+## 🧪 测试与质量
 
-本项目严格遵循 **TDD (测试驱动开发)** 流程。
+本项目严格遵循 **TDD (测试驱动开发)**。
 
-运行所有测试：
-```bash
-uv run pytest
-```
+* **单元测试**: 覆盖核心 Provider、Metadata 及授权逻辑。
+* **模拟环境**: 使用 `respx` 拦截 HTTP 请求，无需真实 Token 即可运行。
+* **运行测试**: `uv run pytest` (当前 **135+** 测试用例全部通过)。
 
-运行特定模块测试：
-```bash
-uv run pytest tests/providers/project/test_work_item_provider.py -v
-```
+---
 
-查看测试覆盖率：
-```bash
-uv run pytest tests/ -v --tb=short
-```
+## 📏 开发规范
 
-测试环境说明：
-*   使用 `pytest-asyncio` 处理异步测试。
-*   使用 `respx` 模拟 HTTP 请求，无需真实 Token 即可运行单元测试。
-*   当前测试覆盖：**135 个测试用例全部通过**。
+* **异步规范**: 所有 I/O 必须 `await`。
+* **零硬编码**: 必须通过 `MetadataManager` 解析字段别名。
+* **错误过滤**: 确保敏感堆栈信息不透传给 LLM。
 
-## 🐳 部署 (Deployment)
-
-### 使用 Docker
-
-1. **构建镜像**
-   ```bash
-   docker compose build
-   ```
-
-2. **启动服务**
-   ```bash
-   docker compose up -d
-   ```
-
-或者直接使用 `Dockerfile`:
-```bash
-docker build -t feishu-agent .
-docker run --env-file .env feishu-agent
-```
+---
 
 ## 📂 项目结构
 
 ```text
-.
-├── src/
-│   ├── core/               # 核心组件
-│   │   ├── auth.py         # 认证管理
-│   │   ├── cache.py        # 缓存工具
-│   │   ├── config.py       # 配置管理
-│   │   └── project_client.py # HTTP 客户端（含重试机制）
-│   ├── providers/          # 能力层 (Provider 模式)
-│   │   └── project/
-│   │       ├── api/        # 原子 API 封装
-│   │       ├── managers/   # 元数据管理器
-│   │       └── work_item_provider.py # 业务逻辑编排
-│   ├── schemas/            # Pydantic 数据模型
-│   │   └── project.py      # 工作项相关模型
-│   ├── services/           # 服务层
-│   └── mcp_server.py       # MCP 工具定义
-├── tests/                  # 测试用例 (135+)
-├── main.py                 # 程序入口
-├── pyproject.toml          # 依赖配置
-└── doc/                    # 详细开发文档
+src/
+├── core/           # 核心逻辑 (Auth, Config, Cache, Client)
+├── providers/      # 业务 Provider (Project, Meta Managers)
+├── schemas/        # Pydantic 数据模型 (API 交互标准)
+├── http_server.py  # HTTP 包装层 (FastAPI)
+├── mcp_server.py   # MCP 接口定义与工具注册
+main.py             # 双模启动入口 & 进程管理
 ```
 
-## 📏 开发规范
+---
 
-在贡献代码前，请务必阅读以下文档：
+## 📄 许可
 
-1.  **[开发协议 (Development Protocol)](doc/Planning/First_stage/Development_Protocol.md)**: 规定了 Bottom-Up 开发流程和 TDD 测试规范。
-2.  **[API 参考文档](doc/Feishu_project_api/API_Reference.md)**: 飞书项目 API 的详细说明。
-3.  **[项目进度](doc/Planning/Progress.md)**: 当前开发进度和路线图。
-
-### 核心原则
-*   **异步优先**: 所有 I/O 操作必须使用 `async/await`。
-*   **类型安全**: 严格使用 Python Type Hints。
-*   **零硬编码**: 所有 Key/Value 通过 MetadataManager 动态解析。
-*   **错误处理**: 在 Provider 层捕获底层 API 异常，返回对 Agent 友好的错误信息。
-*   **自动重试**: 网络错误和 5xx 错误自动重试（最多 3 次，指数退避）。
+MIT License. 版权所有 © 2026 Wulnut.

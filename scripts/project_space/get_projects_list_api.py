@@ -3,7 +3,7 @@ Author: liangyz liangyz@seirobotics.net
 Date: 2026-01-12 18:25:05
 LastEditors: liangyz liangyz@seirobotics.net
 LastEditTime: 2026-01-12 18:45:16
-FilePath: /feishu_agent/scripts/get_projects_api.py
+FilePath: /lark_agent/scripts/get_projects_api.py
 Description: get projects from feishu project api
 Usage:
     uv run scripts/project_space/get_projects_list_api.py

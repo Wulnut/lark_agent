@@ -3,7 +3,7 @@ Author: liangyz liangyz@seirobotics.net
 Date: 2026-01-12 15:48:30
 LastEditors: liangyz liangyz@seirobotics.net
 LastEditTime: 2026-01-15 21:46:00
-FilePath: /feishu_agent/src/core/client.py
+FilePath: /lark_agent/src/core/client.py
 """
 
 import logging
@@ -59,7 +59,7 @@ def get_lark_client():
             raise ValueError(
                 "LARK_APP_ID 和 LARK_APP_SECRET 环境变量未配置。"
                 "这些字段在使用 IM 功能时是必需的。"
-                "请参考文档配置：https://github.com/Wulnut/feishu_agent/blob/main/doc/安装使用指南.md"
+                "请参考文档配置：https://github.com/Wulnut/lark_agent/blob/main/doc/安装使用指南.md"
             )
 
         # 脱敏日志：仅显示 app_id 前 4 位

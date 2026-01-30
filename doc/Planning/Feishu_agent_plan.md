@@ -1,4 +1,4 @@
-# Feishu Agent 技术方案
+# Lark Agent 技术方案
 
 ## 1. 通用规则 (General Rules)
 

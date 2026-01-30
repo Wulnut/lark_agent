@@ -3,7 +3,7 @@ Author: liangyz liangyz@seirobotics.net
 Date: 2026-01-12 17:29:11
 LastEditors: liangyz liangyz@seirobotics.net
 LastEditTime: 2026-01-13 23:56:11
-FilePath: /feishu_agent/src/core/cache.py
+FilePath: /lark_agent/src/core/cache.py
 """
 
 import logging

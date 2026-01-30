@@ -3,7 +3,7 @@ Author: liangyz liangyz@seirobotics.net
 Date: 2026-01-12 15:48:38
 LastEditors: liangyz liangyz@seirobotics.net
 LastEditTime: 2026-01-14 12:44:01
-FilePath: /feishu_agent/src/mcp_server.py
+FilePath: /lark_agent/src/mcp_server.py
 Description:
     MCP Server - 飞书 Agent 工具接口
 

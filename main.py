@@ -3,9 +3,9 @@ Author: liangyz liangyz@seirobotics.net
 Date: 2026-01-12 15:48:38
 LastEditors: liangyz liangyz@seirobotics.net
 LastEditTime: 2026-01-27 12:42:57
-FilePath: /feishu_agent/main.py
+FilePath: /lark_agent/main.py
 Description:
-    Feishu Agent MCP Server 入口点
+    Lark Agent MCP Server 入口点
 
     支持同时启动:
     1. MCP Server (Stdio模式，供 Cursor/Claude 等调用) - 运行在主进程

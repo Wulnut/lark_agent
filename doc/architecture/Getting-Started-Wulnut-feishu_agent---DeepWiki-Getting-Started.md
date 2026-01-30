@@ -1,27 +1,27 @@
 # Getting Started
 
 > **Relevant source files**
-> * [.env.example](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/.env.example)
-> * [AGENTS.md](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/AGENTS.md)
-> * [README.md](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md)
-> * [doc/Planning/Planning_1.md](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/doc/Planning/Planning_1.md)
-> * [doc/Planning/Progress.md](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/doc/Planning/Progress.md)
-> * [pyproject.toml](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/pyproject.toml)
-> * [src/__init__.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/__init__.py)
-> * [src/core/cache.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/cache.py)
-> * [src/core/client.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/client.py)
-> * [src/core/config.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/config.py)
-> * [src/schemas/project.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/schemas/project.py)
-> * [tests/conftest.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/tests/conftest.py)
-> * [tests/unit/core/test_config.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/tests/unit/core/test_config.py)
+> * [.env.example](https://github.com/Wulnut/lark_agent/blob/e9d158cb/.env.example)
+> * [AGENTS.md](https://github.com/Wulnut/lark_agent/blob/e9d158cb/AGENTS.md)
+> * [README.md](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md)
+> * [doc/Planning/Planning_1.md](https://github.com/Wulnut/lark_agent/blob/e9d158cb/doc/Planning/Planning_1.md)
+> * [doc/Planning/Progress.md](https://github.com/Wulnut/lark_agent/blob/e9d158cb/doc/Planning/Progress.md)
+> * [pyproject.toml](https://github.com/Wulnut/lark_agent/blob/e9d158cb/pyproject.toml)
+> * [src/__init__.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/__init__.py)
+> * [src/core/cache.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/cache.py)
+> * [src/core/client.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/client.py)
+> * [src/core/config.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/config.py)
+> * [src/schemas/project.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/schemas/project.py)
+> * [tests/conftest.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/tests/conftest.py)
+> * [tests/unit/core/test_config.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/tests/unit/core/test_config.py)
 
-This page provides a comprehensive guide to installing, configuring, and running the Feishu Agent MCP Server. It covers the essential steps to get the server operational and integrated with AI assistants like Cursor or Claude Desktop. For detailed architecture information, see [Architecture](/Wulnut/feishu_agent/3-architecture). For specific MCP tool usage, see [MCP Tools Reference](/Wulnut/feishu_agent/5-mcp-tools-reference).
+This page provides a comprehensive guide to installing, configuring, and running the Lark Agent MCP Server. It covers the essential steps to get the server operational and integrated with AI assistants like Cursor or Claude Desktop. For detailed architecture information, see [Architecture](/Wulnut/lark_agent/3-architecture). For specific MCP tool usage, see [MCP Tools Reference](/Wulnut/lark_agent/5-mcp-tools-reference).
 
 ---
 
 ## Prerequisites
 
-Before installing the Feishu Agent, ensure you have:
+Before installing the Lark Agent, ensure you have:
 
 | Requirement | Version | Purpose |
 | --- | --- | --- |
@@ -39,17 +39,17 @@ Before installing the Feishu Agent, ensure you have:
 
 * `LARK_APP_ID` and `LARK_APP_SECRET`: Lark application credentials
 
-Sources: [README.md L183-L186](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md#L183-L186)
+Sources: [README.md L183-L186](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md#L183-L186)
 
- [src/core/config.py L14-L34](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/config.py#L14-L34)
+ [src/core/config.py L14-L34](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/config.py#L14-L34)
 
- [.env.example L1-L28](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/.env.example#L1-L28)
+ [.env.example L1-L28](https://github.com/Wulnut/lark_agent/blob/e9d158cb/.env.example#L1-L28)
 
 ---
 
 ## Installation Methods
 
-The Feishu Agent supports two installation methods. For detailed instructions, see [Installation](/Wulnut/feishu_agent/2.1-installation).
+The Lark Agent supports two installation methods. For detailed instructions, see [Installation](/Wulnut/lark_agent/2.1-installation).
 
 ### Method 1: Tool Install (Recommended)
 
@@ -57,13 +57,13 @@ The `uv tool install` method provides the simplest installation experience:
 
 ```python
 # Install directly from GitHub
-uv tool install --from git+https://github.com/Wulnut/feishu_agent feishu-agent
+uv tool install --from git+https://github.com/Wulnut/lark_agent lark-agent
 
 # The command becomes globally available
-feishu-agent
+lark-agent
 ```
 
-After installation, the `feishu-agent` command is automatically added to your system PATH, as defined in [pyproject.toml L21-L22](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/pyproject.toml#L21-L22)
+After installation, the `lark-agent` command is automatically added to your system PATH, as defined in [pyproject.toml L21-L22](https://github.com/Wulnut/lark_agent/blob/e9d158cb/pyproject.toml#L21-L22)
 
 ### Method 2: From Source
 
@@ -71,8 +71,8 @@ For development or customization:
 
 ```markdown
 # Clone repository
-git clone https://github.com/Wulnut/feishu_agent.git
-cd feishu_agent
+git clone https://github.com/Wulnut/lark_agent.git
+cd lark_agent
 
 # Install dependencies
 uv sync
@@ -136,15 +136,15 @@ subgraph subGraph0 ["Method 1: Tool Install"]
 end
 ```
 
-Sources: [README.md L169-L223](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md#L169-L223)
+Sources: [README.md L169-L223](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md#L169-L223)
 
- [pyproject.toml L1-L44](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/pyproject.toml#L1-L44)
+ [pyproject.toml L1-L44](https://github.com/Wulnut/lark_agent/blob/e9d158cb/pyproject.toml#L1-L44)
 
 ---
 
 ## Configuration
 
-Configuration is managed through environment variables loaded by the `Settings` class. For detailed configuration options, see [Configuration](/Wulnut/feishu_agent/2.2-configuration).
+Configuration is managed through environment variables loaded by the `Settings` class. For detailed configuration options, see [Configuration](/Wulnut/lark_agent/2.2-configuration).
 
 ### Configuration Loading Flow
 
@@ -221,7 +221,7 @@ LARK_APP_SECRET=your_app_secret
 LOG_LEVEL=INFO
 ```
 
-The `Settings` class automatically validates required fields on initialization [src/core/config.py L14-L54](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/config.py#L14-L54)
+The `Settings` class automatically validates required fields on initialization [src/core/config.py L14-L54](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/config.py#L14-L54)
 
 **Authentication Priority:**
 
@@ -229,15 +229,15 @@ The `Settings` class automatically validates required fields on initialization [
 2. If not found, plugin credentials are used to fetch a dynamic token
 3. Tokens are cached with a 60-second expiry buffer
 
-Sources: [.env.example L1-L28](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/.env.example#L1-L28)
+Sources: [.env.example L1-L28](https://github.com/Wulnut/lark_agent/blob/e9d158cb/.env.example#L1-L28)
 
- [src/core/config.py L14-L54](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/config.py#L14-L54)
+ [src/core/config.py L14-L54](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/config.py#L14-L54)
 
 ---
 
 ## Client Integration
 
-The Feishu Agent exposes two interfaces for client integration. For detailed client configuration, see [Client Integration](/Wulnut/feishu_agent/2.3-client-integration).
+The Lark Agent exposes two interfaces for client integration. For detailed client configuration, see [Client Integration](/Wulnut/lark_agent/2.3-client-integration).
 
 ### Interface Architecture
 
@@ -296,8 +296,8 @@ end
 ```json
 {
   "mcpServers": {
-    "feishu-agent": {
-      "command": "feishu-agent"
+    "lark-agent": {
+      "command": "lark-agent"
     }
   }
 }
@@ -308,8 +308,8 @@ end
 ```json
 {
   "mcpServers": {
-    "feishu-agent": {
-      "command": "feishu-agent"
+    "lark-agent": {
+      "command": "lark-agent"
     }
   }
 }
@@ -320,12 +320,12 @@ end
 ```json
 {
   "mcpServers": {
-    "feishu-agent": {
+    "lark-agent": {
       "command": "uv",
       "args": [
         "run",
         "--directory",
-        "/path/to/feishu_agent",
+        "/path/to/lark_agent",
         "main.py"
       ]
     }
@@ -333,7 +333,7 @@ end
 }
 ```
 
-Sources: [README.md L228-L309](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md#L228-L309)
+Sources: [README.md L228-L309](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md#L228-L309)
 
 ---
 
@@ -353,7 +353,7 @@ sequenceDiagram
   participant Settings Singleton
   participant AuthManager
 
-  User->>Shell: feishu-agent
+  User->>Shell: lark-agent
   Shell->>main.py: Execute main()
   main.py->>Settings Singleton: Load configuration from .env
   Settings Singleton-->>main.py: Config loaded
@@ -394,7 +394,7 @@ sequenceDiagram
   MCP Server-->>AI Assistant: {"ProjectA": "project_xxx", "ProjectB": "project_yyy"}
 ```
 
-Sources: [src/mcp_server.py L1-L400](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#L1-L400)
+Sources: [src/mcp_server.py L1-L400](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#L1-L400)
 
 ---
 
@@ -407,7 +407,7 @@ After installation and configuration, verify the server is working correctly.
 When the server starts successfully, you should see:
 
 ```
-INFO - Starting Feishu Agent MCP Server
+INFO - Starting Lark Agent MCP Server
 INFO - HTTP API server will be available at http://localhost:8002
 INFO - MCP server running in stdio mode
 ```
@@ -460,9 +460,9 @@ uv run python -c "from src.core.config import settings; print(f'User Key: {setti
 | Import errors | Run `uv sync` to install dependencies |
 | Port 8002 in use | Change port in HTTP server configuration |
 
-Sources: [README.md L224-L227](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md#L224-L227)
+Sources: [README.md L224-L227](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md#L224-L227)
 
- [tests/conftest.py L1-L110](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/tests/conftest.py#L1-L110)
+ [tests/conftest.py L1-L110](https://github.com/Wulnut/lark_agent/blob/e9d158cb/tests/conftest.py#L1-L110)
 
 ---
 
@@ -523,22 +523,22 @@ end
 
 When the MCP server initializes, it registers six tools using the `@mcp.tool()` decorator:
 
-1. **`list_projects`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Returns project name to key mapping
-2. **`create_task`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Creates a new work item
-3. **`get_tasks`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Lists work items with filtering
-4. **`get_task_detail`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Gets full work item details with readable fields
-5. **`update_task`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Updates work item fields
-6. **`get_task_options`** [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Discovers available field options
+1. **`list_projects`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Returns project name to key mapping
+2. **`create_task`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Creates a new work item
+3. **`get_tasks`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Lists work items with filtering
+4. **`get_task_detail`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Gets full work item details with readable fields
+5. **`update_task`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Updates work item fields
+6. **`get_task_options`** [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN) : Discovers available field options
 
-Each tool creates a fresh `WorkItemProvider` instance via `_create_provider()` [src/mcp_server.py](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN)
+Each tool creates a fresh `WorkItemProvider` instance via `_create_provider()` [src/mcp_server.py](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#LNaN-LNaN)
 
  to ensure context isolation between requests.
 
-Sources: [src/mcp_server.py L1-L400](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/mcp_server.py#L1-L400)
+Sources: [src/mcp_server.py L1-L400](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/mcp_server.py#L1-L400)
 
- [src/core/auth.py L1-L150](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/auth.py#L1-L150)
+ [src/core/auth.py L1-L150](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/auth.py#L1-L150)
 
- [src/core/project_client.py L1-L200](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/src/core/project_client.py#L1-L200)
+ [src/core/project_client.py L1-L200](https://github.com/Wulnut/lark_agent/blob/e9d158cb/src/core/project_client.py#L1-L200)
 
 ---
 
@@ -546,13 +546,13 @@ Sources: [src/mcp_server.py L1-L400](https://github.com/Wulnut/feishu_agent/blob
 
 After completing the getting started workflow:
 
-1. **Explore MCP Tools**: See [MCP Tools Reference](/Wulnut/feishu_agent/5-mcp-tools-reference) for detailed tool documentation
-2. **Understand Architecture**: Read [Architecture](/Wulnut/feishu_agent/3-architecture) to learn about the four-layer design
-3. **Customize Configuration**: See [Configuration](/Wulnut/feishu_agent/2.2-configuration) for advanced options
-4. **Development**: See [Development Guide](/Wulnut/feishu_agent/6-development-guide) if you plan to contribute or extend the codebase
+1. **Explore MCP Tools**: See [MCP Tools Reference](/Wulnut/lark_agent/5-mcp-tools-reference) for detailed tool documentation
+2. **Understand Architecture**: Read [Architecture](/Wulnut/lark_agent/3-architecture) to learn about the four-layer design
+3. **Customize Configuration**: See [Configuration](/Wulnut/lark_agent/2.2-configuration) for advanced options
+4. **Development**: See [Development Guide](/Wulnut/lark_agent/6-development-guide) if you plan to contribute or extend the codebase
 
-For troubleshooting common issues, see [Troubleshooting](/Wulnut/feishu_agent/8-troubleshooting).
+For troubleshooting common issues, see [Troubleshooting](/Wulnut/lark_agent/8-troubleshooting).
 
-Sources: [README.md L1-L393](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/README.md#L1-L393)
+Sources: [README.md L1-L393](https://github.com/Wulnut/lark_agent/blob/e9d158cb/README.md#L1-L393)
 
- [doc/Planning/Progress.md L1-L110](https://github.com/Wulnut/feishu_agent/blob/e9d158cb/doc/Planning/Progress.md#L1-L110)
+ [doc/Planning/Progress.md L1-L110](https://github.com/Wulnut/lark_agent/blob/e9d158cb/doc/Planning/Progress.md#L1-L110)
