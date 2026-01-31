@@ -248,6 +248,75 @@ def with_user_context(func: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
+def with_error_handling(operation: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """
+    统一的错误处理装饰器
+
+    捕获常见异常并生成标准化的错误响应，减少重复的 try/except 代码。
+
+    Args:
+        operation: 操作名称，如 "创建任务"、"获取列表"，用于错误消息
+
+    Returns:
+        装饰后的函数
+
+    Usage:
+        @mcp.tool()
+        @with_user_context
+        @with_error_handling("创建任务")
+        async def create_task(...):
+            # 只写业务逻辑，无需 try/except
+            ...
+    """
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            # 提取 project 参数用于日志脱敏
+            project = kwargs.get("project")
+            try:
+                return await func(*args, **kwargs)
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                error_detail = str(e)
+                # 特殊处理 HTTP 错误：尝试提取 API 错误详情
+                if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
+                    try:
+                        err_json = e.response.json()
+                        if isinstance(err_json, dict) and "err_msg" in err_json:
+                            api_msg = err_json.get("err_msg")
+                            inner_msg = err_json.get("err", {}).get("msg")
+                            full_msg = (
+                                f"{api_msg}: {inner_msg}" if inner_msg else api_msg
+                            )
+                            error_detail = f"{e}; API Error: {full_msg}"
+                    except Exception:
+                        pass
+                logger.error(
+                    "Failed to %s: project=%s, error=%s",
+                    operation,
+                    _mask_project(project),
+                    error_detail,
+                    exc_info=True,
+                )
+                return f"{operation}失败: {error_detail}"
+            except Exception as e:
+                error_msg = _extract_safe_error_message(e)
+                if _should_expose_error(error_msg):
+                    return f"{operation}失败: {_mask_sensitive_in_error(error_msg)}"
+                logger.critical(
+                    "Unexpected error in %s: project=%s, error=%s",
+                    operation,
+                    _mask_project(project),
+                    error_msg,
+                    exc_info=True,
+                )
+                return f"{operation}失败: 系统内部错误"
+
+        return wrapper
+
+    return decorator
+
+
 def _is_project_key_format(identifier: str) -> bool:
     """判断是否为 project_key 格式（以 'project_' 开头）"""
     return bool(identifier and identifier.startswith("project_"))
@@ -312,32 +381,26 @@ def _create_provider(
     project = _normalize_string_param(project)
     work_item_type = _normalize_string_param(work_item_type)
 
-    if not project:
-        # 使用默认项目（从环境变量读取）
-        logger.debug("Using default project from FEISHU_PROJECT_KEY")
-        if work_item_type:
-            return WorkItemProvider(work_item_type_name=work_item_type)
-        return WorkItemProvider()
+    # 使用字典解包构建参数
+    kwargs: dict[str, str] = {}
 
-    if _is_project_key_format(project):
-        logger.debug("Treating '%s' as project_key", _mask_project(project))
-        if work_item_type:
-            return WorkItemProvider(
-                project_key=project, work_item_type_name=work_item_type
-            )
-        return WorkItemProvider(project_key=project)
+    if work_item_type:
+        kwargs["work_item_type_name"] = work_item_type
+
+    if project:
+        # 根据格式判断是 project_key 还是 project_name
+        key = "project_key" if _is_project_key_format(project) else "project_name"
+        kwargs[key] = project
+        logger.debug("Treating '%s' as %s", _mask_project(project), key)
     else:
-        # 当作项目名称处理
-        logger.debug("Treating '%s' as project_name", _mask_project(project))
-        if work_item_type:
-            return WorkItemProvider(
-                project_name=project, work_item_type_name=work_item_type
-            )
-        return WorkItemProvider(project_name=project)
+        logger.debug("Using default project from FEISHU_PROJECT_KEY")
+
+    return WorkItemProvider(**kwargs)
 
 
 @mcp.tool()
 @with_user_context
+@with_error_handling("获取项目列表")
 async def list_projects(user_key: Optional[str] = None) -> str:
     """
     列出所有可用的飞书项目空间。
@@ -356,37 +419,25 @@ async def list_projects(user_key: Optional[str] = None) -> str:
         # 查看有哪些项目可用
         list_projects()
     """
-    try:
-        logger.info("Listing all available projects")
-        meta = MetadataManager.get_instance()
-        projects = await meta.list_projects()
+    logger.info("Listing all available projects")
+    meta = MetadataManager.get_instance()
+    projects = await meta.list_projects()
 
-        logger.info("Retrieved %d projects", len(projects))
-        return json.dumps(
-            {
-                "count": len(projects),
-                "projects": projects,
-                "hint": "使用项目名称或 project_key 都可以调用其他工具",
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.error("Failed to list projects: %s", e, exc_info=True)
-        return f"获取项目列表失败: {str(e)}"
-    except Exception as e:
-        # 提取安全的错误信息，移除堆栈跟踪
-        error_msg = _extract_safe_error_message(e)
-        if _should_expose_error(error_msg):
-            # 透传前进行敏感信息脱敏
-            return f"获取项目列表失败: {_mask_sensitive_in_error(error_msg)}"
-        # 捕获其他未知异常，但记录完整信息以便调试
-        logger.critical("Unexpected error listing projects: %s", e, exc_info=True)
-        return "获取项目列表失败: 系统内部错误"
+    logger.info("Retrieved %d projects", len(projects))
+    return json.dumps(
+        {
+            "count": len(projects),
+            "projects": projects,
+            "hint": "使用项目名称或 project_key 都可以调用其他工具",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @mcp.tool()
 @with_user_context
+@with_error_handling("创建任务")
 async def create_task(
     name: str,
     project: Optional[str] = None,
@@ -432,44 +483,24 @@ async def create_task(
             assignee="张三"
         )
     """
-    try:
-        # 日志脱敏：不记录完整的项目标识符和任务名称
-        logger.info(
-            "Creating task: project=%s, work_item_type=%s, name_len=%d, priority=%s, has_assignee=%s",
-            _mask_project(project),
-            work_item_type,
-            len(name) if name else 0,
-            priority,
-            bool(assignee),
-        )
-        provider = _create_provider(project, work_item_type)
-        issue_id = await provider.create_issue(
-            name=name,
-            priority=priority,
-            description=description,
-            assignee=assignee,
-        )
-        logger.info("Task created successfully: issue_id=%s", issue_id)
-        return f"创建成功，Issue ID: {issue_id}"
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.error(
-            "Failed to create task: project=%s, error=%s",
-            _mask_project(project),
-            e,
-            exc_info=True,
-        )
-        return f"创建失败: {str(e)}"
-    except Exception as e:
-        error_msg = _extract_safe_error_message(e)
-        if _should_expose_error(error_msg):
-            return f"创建失败: {_mask_sensitive_in_error(error_msg)}"
-        logger.critical(
-            "Unexpected error creating task: project=%s, error=%s",
-            _mask_project(project),
-            e,
-            exc_info=True,
-        )
-        return "创建失败: 系统内部错误"
+    # 日志脱敏：不记录完整的项目标识符和任务名称
+    logger.info(
+        "Creating task: project=%s, work_item_type=%s, name_len=%d, priority=%s, has_assignee=%s",
+        _mask_project(project),
+        work_item_type,
+        len(name) if name else 0,
+        priority,
+        bool(assignee),
+    )
+    provider = _create_provider(project, work_item_type)
+    issue_id = await provider.create_issue(
+        name=name,
+        priority=priority,
+        description=description,
+        assignee=assignee,
+    )
+    logger.info("Task created successfully: issue_id=%s", issue_id)
+    return f"创建成功，Issue ID: {issue_id}"
 
 
 @mcp.tool()
@@ -661,6 +692,7 @@ async def get_tasks(
 
 @mcp.tool()
 @with_user_context
+@with_error_handling("获取工作项详情")
 async def get_task_detail(
     issue_id: int,
     project: Optional[str] = None,
@@ -699,37 +731,17 @@ async def get_task_detail(
             work_item_type="Issue管理"
         )
     """
-    try:
-        logger.info(
-            "Getting task detail: project=%s, work_item_type=%s, issue_id=%s",
-            _mask_project(project),
-            work_item_type,
-            issue_id,
-        )
-        provider = _create_provider(project, work_item_type)
-        detail = await provider.get_readable_issue_details(issue_id)
+    logger.info(
+        "Getting task detail: project=%s, work_item_type=%s, issue_id=%s",
+        _mask_project(project),
+        work_item_type,
+        issue_id,
+    )
+    provider = _create_provider(project, work_item_type)
+    detail = await provider.get_readable_issue_details(issue_id)
 
-        logger.info("Retrieved task detail successfully: issue_id=%s", issue_id)
-        return json.dumps(detail, ensure_ascii=False, indent=2)
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.error(
-            "Failed to get task detail: issue_id=%s, error=%s",
-            issue_id,
-            e,
-            exc_info=True,
-        )
-        return f"获取工作项详情失败: {str(e)}"
-    except Exception as e:
-        error_msg = _extract_safe_error_message(e)
-        if _should_expose_error(error_msg):
-            return f"获取工作项详情失败: {_mask_sensitive_in_error(error_msg)}"
-        logger.critical(
-            "Unexpected error getting task detail: issue_id=%s, error=%s",
-            issue_id,
-            e,
-            exc_info=True,
-        )
-        return "获取工作项详情失败: 系统内部错误"
+    logger.info("Retrieved task detail successfully: issue_id=%s", issue_id)
+    return json.dumps(detail, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -902,6 +914,7 @@ async def update_task(
 
 @mcp.tool()
 @with_user_context
+@with_error_handling("批量更新任务")
 async def batch_update_tasks(
     issue_ids: Optional[List[int]] = None,
     issue_id: Optional[int] = None,
@@ -935,95 +948,76 @@ async def batch_update_tasks(
     Returns:
         JSON 格式结果，包含 success 状态和后台任务 ID 列表。
     """
-    try:
-        # 合并并去重（保持插入顺序）
-        combined = (issue_ids or []) + ([issue_id] if issue_id is not None else [])
-        target_ids = list(dict.fromkeys(combined))
+    # 合并并去重（保持插入顺序）
+    combined = (issue_ids or []) + ([issue_id] if issue_id is not None else [])
+    target_ids = list(dict.fromkeys(combined))
 
-        if not target_ids:
-            return json.dumps(
-                {"success": False, "error": "必须提供 issue_ids 或 issue_id"},
-                ensure_ascii=False,
-            )
-
-        extra_fields = (
-            {field_name: field_value}
-            if field_name and field_value is not None
-            else None
-        )
-
-        logger.info(
-            "Batch updating tasks: project=%s, count=%d, fields=[name=%s, priority=%s, status=%s, assignee=%s]",
-            _mask_project(project),
-            len(target_ids),
-            bool(name),
-            priority,
-            status,
-            bool(assignee),
-        )
-
-        provider = _create_provider(project, work_item_type)
-        results = await provider.batch_update_issues(
-            issue_ids=target_ids,
-            name=name,
-            priority=priority,
-            description=description,
-            status=status,
-            assignee=assignee,
-            extra_fields=extra_fields,
-        )
-
-        logger.info("Batch update completed: %d results", len(results))
-
-        # 序列化 UpdateResult 对象为字典
-        serialized_results = [
-            {
-                "success": r.success,
-                "issue_id": r.issue_id,
-                "field_name": r.field_name,
-                "message": r.message,
-            }
-            for r in results
-        ]
-
-        # 统计成功操作数
-        success_count = sum(1 for r in results if r.success)
-
+    if not target_ids:
         return json.dumps(
-            {
-                "success": True,
-                "message": f"批量更新完成，成功 {success_count}/{len(results)} 个操作",
-                "data": {
-                    "results": serialized_results,
-                    "issue_count": len(target_ids),
-                },
-            },
+            {"success": False, "error": "必须提供 issue_ids 或 issue_id"},
             ensure_ascii=False,
-            indent=2,
         )
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.error(
-            "Failed to batch update tasks: project=%s, error=%s",
-            _mask_project(project),
-            e,
-            exc_info=True,
-        )
-        return f"批量更新失败: {str(e)}"
-    except Exception as e:
-        error_msg = _extract_safe_error_message(e)
-        if _should_expose_error(error_msg):
-            return f"批量更新失败: {_mask_sensitive_in_error(error_msg)}"
-        logger.critical(
-            "Unexpected error batch updating tasks: project=%s, error=%s",
-            _mask_project(project),
-            e,
-            exc_info=True,
-        )
-        return "批量更新失败: 系统内部错误"
+
+    extra_fields = (
+        {field_name: field_value}
+        if field_name and field_value is not None
+        else None
+    )
+
+    logger.info(
+        "Batch updating tasks: project=%s, count=%d, fields=[name=%s, priority=%s, status=%s, assignee=%s]",
+        _mask_project(project),
+        len(target_ids),
+        bool(name),
+        priority,
+        status,
+        bool(assignee),
+    )
+
+    provider = _create_provider(project, work_item_type)
+    results = await provider.batch_update_issues(
+        issue_ids=target_ids,
+        name=name,
+        priority=priority,
+        description=description,
+        status=status,
+        assignee=assignee,
+        extra_fields=extra_fields,
+    )
+
+    logger.info("Batch update completed: %d results", len(results))
+
+    # 序列化 UpdateResult 对象为字典
+    serialized_results = [
+        {
+            "success": r.success,
+            "issue_id": r.issue_id,
+            "field_name": r.field_name,
+            "message": r.message,
+        }
+        for r in results
+    ]
+
+    # 统计成功操作数
+    success_count = sum(1 for r in results if r.success)
+
+    return json.dumps(
+        {
+            "success": True,
+            "message": f"批量更新完成，成功 {success_count}/{len(results)} 个操作",
+            "data": {
+                "results": serialized_results,
+                "issue_count": len(target_ids),
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @mcp.tool()
 @with_user_context
+@with_error_handling("获取选项")
 async def get_task_options(
     field_name: str,
     project: Optional[str] = None,
@@ -1058,43 +1052,21 @@ async def get_task_options(
         # 指定工作项类型查看选项
         get_task_options(field_name="status", project="Project Management", work_item_type="需求管理")
     """
-    try:
-        logger.info(
-            "Getting task options: project=%s, work_item_type=%s, field_name=%s",
-            _mask_project(project),
-            work_item_type,
-            field_name,
-        )
-        provider = _create_provider(project, work_item_type)
-        options = await provider.list_available_options(field_name)
+    logger.info(
+        "Getting task options: project=%s, work_item_type=%s, field_name=%s",
+        _mask_project(project),
+        work_item_type,
+        field_name,
+    )
+    provider = _create_provider(project, work_item_type)
+    options = await provider.list_available_options(field_name)
 
-        logger.info("Retrieved %d options for field '%s'", len(options), field_name)
-        return json.dumps(
-            {"field": field_name, "options": options},
-            ensure_ascii=False,
-            indent=2,
-        )
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.error(
-            "Failed to get options: project=%s, field_name=%s, error=%s",
-            _mask_project(project),
-            field_name,
-            e,
-            exc_info=True,
-        )
-        return f"获取选项失败: {str(e)}"
-    except Exception as e:
-        error_msg = _extract_safe_error_message(e)
-        if _should_expose_error(error_msg):
-            return f"获取选项失败: {_mask_sensitive_in_error(error_msg)}"
-        logger.critical(
-            "Unexpected error getting options: project=%s, field_name=%s, error=%s",
-            _mask_project(project),
-            field_name,
-            e,
-            exc_info=True,
-        )
-        return "获取选项失败: 系统内部错误"
+    logger.info("Retrieved %d options for field '%s'", len(options), field_name)
+    return json.dumps(
+        {"field": field_name, "options": options},
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 def main():

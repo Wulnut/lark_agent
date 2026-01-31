@@ -14,8 +14,6 @@ from src.providers.lark_project.managers import MetadataManager
 from src.providers.lark_project.field_resolver import (
     FieldResolver,
 )
-from src.providers.lark_project.work_item_formatter import WorkItemFormatter
-from src.providers.lark_project.relation_resolver import RelationResolver
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +94,6 @@ class WorkItemProvider(Provider):
 
         # 初始化抽取的子模块（P0-P2 重构）
         self.field_resolver = FieldResolver(self.meta)
-        self.formatter = WorkItemFormatter(
-            self.meta, self.field_resolver, self._work_item_cache
-        )
-        self.relation_resolver = RelationResolver(self.api, self.meta)
 
     async def _get_project_key(self) -> str:
         if not self._project_key:
@@ -273,6 +267,83 @@ class WorkItemProvider(Provider):
             except Exception:
                 continue
         return "owner"  # 默认值
+
+    async def _build_filter_condition(
+        self,
+        project_key: str,
+        type_key: str,
+        field_name: str,
+        values: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        构建单个字段的过滤条件（DRY 辅助方法）
+
+        将人类可读的字段值转换为 API 所需的过滤条件结构。
+
+        Args:
+            project_key: 项目 Key
+            type_key: 工作项类型 Key
+            field_name: 字段名称（如 "status", "priority"）
+            values: 字段值列表
+
+        Returns:
+            过滤条件字典，如果字段不存在则返回 None
+        """
+        if not await self._field_exists(project_key, type_key, field_name):
+            logger.warning(
+                "Field '%s' not found in project, skipping filter", field_name
+            )
+            return None
+
+        field_key = await self.meta.get_field_key(project_key, type_key, field_name)
+        resolved_values = []
+
+        for v in values:
+            try:
+                val = await self._resolve_field_value(project_key, type_key, field_key, v)
+                resolved_values.append(val)
+            except Exception as e:
+                logger.warning("Failed to resolve %s '%s': %s", field_name, v, e)
+                resolved_values.append(v)
+
+        logger.info("Added %s filter: %s", field_name, values)
+        return {
+            "field_key": field_key,
+            "operator": "IN",
+            "value": resolved_values,
+        }
+
+    async def _build_owner_filter_condition(
+        self,
+        project_key: str,
+        type_key: str,
+        owner: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        构建负责人过滤条件（DRY 辅助方法）
+
+        Args:
+            project_key: 项目 Key
+            type_key: 工作项类型 Key
+            owner: 负责人（姓名或邮箱）
+
+        Returns:
+            过滤条件字典，如果解析失败则返回 None
+        """
+        try:
+            user_key = await self.meta.get_user_key(owner)
+            owner_field_key = await self._resolve_owner_field_key(project_key, type_key)
+            logger.info("Added owner filter: %s (field_key=%s)", owner, owner_field_key)
+            return {
+                "field_key": owner_field_key,
+                "operator": "IN",
+                "value": [user_key],
+            }
+        except Exception as e:
+            logger.warning(
+                "Failed to resolve owner '%s': %s, skipping owner filter", owner, e
+            )
+            return None
 
     def _parse_raw_field_value(self, value: Any) -> Optional[str]:
         """
@@ -845,11 +916,13 @@ class WorkItemProvider(Provider):
             if items:
                 return items[0]
         except Exception as e:
-            logger.debug(f"Initial query failed for type {type_key}: {e}")
+            logger.debug("Initial query failed for type %s: %s", type_key, e)
 
         # 2. 当前类型未找到，尝试跨类型搜索
         logger.info(
-            f"Issue {issue_id} not found in type {type_key}, trying auto-discovery across all types..."
+            "Issue %s not found in type %s, trying auto-discovery across all types...",
+            issue_id,
+            type_key,
         )
 
         try:
@@ -906,7 +979,7 @@ class WorkItemProvider(Provider):
                 return found_item
 
         except Exception as e:
-            logger.warning(f"Auto-discovery failed: {e}")
+            logger.warning("Auto-discovery failed: %s", e)
 
         raise Exception(f"Issue {issue_id} not found in any work item type")
 
@@ -1221,7 +1294,7 @@ class WorkItemProvider(Provider):
                     project_key, type_key, f_key
                 )
             except Exception as e:
-                logger.debug(f"Failed to get field_name for {f_key}: {e}")
+                logger.debug("Failed to get field_name for %s: %s", f_key, e)
 
             # 如果缓存中没有，使用 field_alias 作为备选
             if not field_name:
@@ -1468,16 +1541,29 @@ class WorkItemProvider(Provider):
         extra_fields: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict[str, Any]], List[UpdateResult]]:
         """将人类可读的字段解析为 API 所需的 field_key/value 结构。同时返回解析失败的字段结果。"""
-        resolved_fields = []
-        failed_results = []
+        resolved_fields: List[Dict[str, Any]] = []
+        failed_results: List[UpdateResult] = []
 
-        async def add_field(f_name, f_value, f_key_getter):
+        async def add_field(
+            f_name: str, f_value: Any, f_key: Optional[str] = None
+        ) -> None:
+            """
+            添加字段到解析结果列表
+
+            Args:
+                f_name: 字段显示名称
+                f_value: 字段值
+                f_key: 字段 Key（如果为 None，则通过 meta.get_field_key 解析）
+            """
             try:
                 # 预先清洗字符串输入
                 if isinstance(f_value, str):
                     f_value = f_value.strip()
 
-                f_key = await f_key_getter()
+                # 如果未提供 f_key，通过 meta 解析
+                if f_key is None:
+                    f_key = await self.meta.get_field_key(project_key, type_key, f_name)
+
                 if f_key == "name":
                     resolved_fields.append(
                         {
@@ -1523,35 +1609,23 @@ class WorkItemProvider(Provider):
                     )
                 )
 
+        # 处理固定字段（name 和 owner 使用固定的 field_key）
         if name is not None:
-            await add_field("name", name, lambda: asyncio.sleep(0, "name") or "name")
+            await add_field("name", name, f_key="name")
 
         if description is not None:
-            await add_field(
-                "description",
-                description,
-                lambda: self.meta.get_field_key(project_key, type_key, "description"),
-            )
+            await add_field("description", description)
 
         if priority is not None:
-            await add_field(
-                "priority",
-                priority,
-                lambda: self.meta.get_field_key(project_key, type_key, "priority"),
-            )
+            await add_field("priority", priority)
 
         if status is not None:
-            await add_field(
-                "status",
-                status,
-                lambda: self.meta.get_field_key(project_key, type_key, "status"),
-            )
+            await add_field("status", status)
 
         if assignee is not None:
-            await add_field(
-                "assignee", assignee, lambda: asyncio.sleep(0, "owner") or "owner"
-            )
+            await add_field("assignee", assignee, f_key="owner")
 
+        # 处理额外自定义字段
         if extra_fields:
             for f_name, f_value in extra_fields.items():
                 if not await self._field_exists(project_key, type_key, f_name):
@@ -1564,13 +1638,7 @@ class WorkItemProvider(Provider):
                         )
                     )
                     continue
-                await add_field(
-                    f_name,
-                    f_value,
-                    lambda name=f_name: self.meta.get_field_key(
-                        project_key, type_key, name
-                    ),
-                )
+                await add_field(f_name, f_value)
 
         return resolved_fields, failed_results
 
@@ -1813,80 +1881,32 @@ class WorkItemProvider(Provider):
         project_key = await self._get_project_key()
         type_key = await self._get_type_key()
 
-        # 构建搜索条件
-        conditions = []
+        # 构建搜索条件（使用辅助方法减少重复代码）
+        conditions: List[Dict[str, Any]] = []
 
         # 处理状态过滤
         if status:
-            if await self._field_exists(project_key, type_key, "status"):
-                field_key = await self.meta.get_field_key(
-                    project_key, type_key, "status"
-                )
-                resolved_values = []
-                for s in status:
-                    try:
-                        val = await self._resolve_field_value(
-                            project_key, type_key, field_key, s
-                        )
-                        resolved_values.append(val)
-                    except Exception as e:
-                        logger.warning("Failed to resolve status '%s': %s", s, e)
-                        resolved_values.append(s)
-
-                conditions.append(
-                    {
-                        "field_key": field_key,
-                        "operator": "IN",
-                        "value": resolved_values,
-                    }
-                )
-            else:
-                logger.warning("Field 'status' not found, skipping filter")
+            condition = await self._build_filter_condition(
+                project_key, type_key, "status", status
+            )
+            if condition:
+                conditions.append(condition)
 
         # 处理优先级过滤
         if priority:
-            if await self._field_exists(project_key, type_key, "priority"):
-                field_key = await self.meta.get_field_key(
-                    project_key, type_key, "priority"
-                )
-                resolved_values = []
-                for p in priority:
-                    try:
-                        val = await self._resolve_field_value(
-                            project_key, type_key, field_key, p
-                        )
-                        resolved_values.append(val)
-                    except Exception as e:
-                        logger.warning("Failed to resolve priority '%s': %s", p, e)
-                        resolved_values.append(p)
+            condition = await self._build_filter_condition(
+                project_key, type_key, "priority", priority
+            )
+            if condition:
+                conditions.append(condition)
 
-                conditions.append(
-                    {
-                        "field_key": field_key,
-                        "operator": "IN",
-                        "value": resolved_values,
-                    }
-                )
-            else:
-                logger.warning("Field 'priority' not found, skipping filter")
-
-        # 处理负责人过滤
+        # 处理负责人过滤（使用简化的辅助方法）
         if owner:
-            try:
-                user_key = await self.meta.get_user_key(owner)
-                conditions.append(
-                    {
-                        "field_key": "owner",
-                        "operator": "IN",
-                        "value": [user_key],
-                    }
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to resolve owner '%s': %s, skipping owner filter",
-                    owner,
-                    e,
-                )
+            condition = await self._build_owner_filter_condition(
+                project_key, type_key, owner
+            )
+            if condition:
+                conditions.append(condition)
 
         # 构建 search_group
         search_group = {
@@ -2037,12 +2057,8 @@ class WorkItemProvider(Provider):
                         continue
 
                     # 标准化返回结果（简化版，不需要完整 pagination）
-                    items = (
-                        result
-                        if isinstance(result, list)
-                        else result.get("work_items", [])
-                        if isinstance(result, dict)
-                        else []
+                    items, _ = self._normalize_api_result(
+                        result, result_page_num, self._SCAN_BATCH_SIZE
                     )
 
                     if not items:
@@ -2256,91 +2272,32 @@ class WorkItemProvider(Provider):
             }
 
         # 没有 name_keyword，使用 search_params API 进行复杂条件查询
-        # 构建搜索条件
-        conditions = []
+        # 构建搜索条件（使用辅助方法减少重复代码）
+        conditions: List[Dict[str, Any]] = []
 
         # 处理状态过滤
         if status:
-            if await self._field_exists(project_key, type_key, "status"):
-                field_key = await self.meta.get_field_key(
-                    project_key, type_key, "status"
-                )
-                resolved_values = []
-                for s in status:
-                    try:
-                        val = await self._resolve_field_value(
-                            project_key, type_key, field_key, s
-                        )
-                        resolved_values.append(val)
-                    except Exception as e:
-                        logger.warning("Failed to resolve status '%s': %s", s, e)
-                        resolved_values.append(s)
-
-                conditions.append(
-                    {
-                        "field_key": field_key,
-                        "operator": "IN",
-                        "value": resolved_values,
-                    }
-                )
-                logger.info("Added status filter: %s", status)
-            else:
-                logger.warning(
-                    "Field 'status' not found in project, skipping status filter"
-                )
+            condition = await self._build_filter_condition(
+                project_key, type_key, "status", status
+            )
+            if condition:
+                conditions.append(condition)
 
         # 处理优先级过滤
         if priority:
-            if await self._field_exists(project_key, type_key, "priority"):
-                field_key = await self.meta.get_field_key(
-                    project_key, type_key, "priority"
-                )
-                resolved_values = []
-                for p in priority:
-                    try:
-                        val = await self._resolve_field_value(
-                            project_key, type_key, field_key, p
-                        )
-                        resolved_values.append(val)
-                    except Exception as e:
-                        logger.warning("Failed to resolve priority '%s': %s", p, e)
-                        resolved_values.append(p)
-
-                conditions.append(
-                    {
-                        "field_key": field_key,
-                        "operator": "IN",
-                        "value": resolved_values,
-                    }
-                )
-                logger.info("Added priority filter: %s", priority)
-            else:
-                logger.warning(
-                    "Field 'priority' not found in project, skipping priority filter"
-                )
+            condition = await self._build_filter_condition(
+                project_key, type_key, "priority", priority
+            )
+            if condition:
+                conditions.append(condition)
 
         # 处理负责人过滤
         if owner:
-            try:
-                user_key = await self.meta.get_user_key(owner)
-                # 使用辅助方法动态解析负责人字段 Key
-                owner_field_key = await self._resolve_owner_field_key(
-                    project_key, type_key
-                )
-                conditions.append(
-                    {
-                        "field_key": owner_field_key,
-                        "operator": "IN",
-                        "value": [user_key],
-                    }
-                )
-                logger.info(
-                    "Added owner filter: %s (field_key=%s)", owner, owner_field_key
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to resolve owner '%s': %s, skipping owner filter", owner, e
-                )
+            condition = await self._build_owner_filter_condition(
+                project_key, type_key, owner
+            )
+            if condition:
+                conditions.append(condition)
 
         # 构建 search_group
         search_group = {

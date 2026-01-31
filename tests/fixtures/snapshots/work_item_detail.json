@@ -1,10 +1,26 @@
 {
+  "work_item_type_key": "670f3cdaddd89a6fa8f18e65",
   "deleted_at": 0,
-  "sub_stage": "started",
+  "template_id": 1961905,
+  "id": 6758444436,
   "created_by": "7387857889332969475",
+  "created_at": 1769862041066,
+  "updated_at": 1769862040807,
   "name": "[E2E Test] 自动化测试工作项",
+  "project_key": "66bb463229e5e58856b4ed19",
+  "sub_stage": "started",
+  "simple_name": "zhuliucheng",
+  "pattern": "State",
+  "deleted_by": "",
+  "work_item_status": {
+    "is_archived_state": false,
+    "is_init_state": true,
+    "updated_at": 1769862040807,
+    "updated_by": "7387857889332969475",
+    "state_key": "started"
+  },
+  "template_type": "",
   "updated_by": "7387857889332969475",
-  "id": 6698948556,
   "fields": [
     {
       "field_type_key": "work_item_template",
@@ -16,16 +32,40 @@
       }
     },
     {
+      "field_value": 172,
+      "field_type_key": "number",
+      "field_alias": "auto_number",
+      "field_key": "auto_number"
+    },
+    {
+      "field_type_key": "bool",
+      "field_alias": "archiving_status",
+      "field_key": "archiving_status",
+      "field_value": false
+    },
+    {
+      "field_key": "field_edd79a",
+      "field_value": null,
+      "field_type_key": "work_item_related_select",
+      "field_alias": ""
+    },
+    {
+      "field_key": "role_owners",
+      "field_value": [],
+      "field_type_key": "role_owners",
+      "field_alias": ""
+    },
+    {
       "field_key": "start_time",
-      "field_value": 1768494212373,
+      "field_value": 1769862040807,
       "field_type_key": "date",
       "field_alias": "start_time"
     },
     {
-      "field_alias": "is_frozen",
-      "field_key": "is_frozen",
-      "field_value": false,
-      "field_type_key": "bool"
+      "field_type_key": "user",
+      "field_alias": "owner",
+      "field_key": "owner",
+      "field_value": "7387857889332969475"
     },
     {
       "field_key": "aborted",
@@ -37,62 +77,22 @@
       "field_alias": ""
     },
     {
-      "field_type_key": "user",
-      "field_alias": "owner",
-      "field_key": "owner",
-      "field_value": "7387857889332969475"
-    },
-    {
-      "field_key": "field_edd79a",
-      "field_value": null,
-      "field_type_key": "work_item_related_select",
-      "field_alias": ""
-    },
-    {
-      "field_alias": "",
-      "field_key": "role_owners",
-      "field_value": [],
-      "field_type_key": "role_owners"
-    },
-    {
       "field_key": "current_status_operator",
       "field_value": null,
       "field_type_key": "multi_user",
       "field_alias": "current_status_operator"
     },
     {
-      "field_key": "description",
+      "field_type_key": "bool",
+      "field_alias": "is_frozen",
+      "field_key": "is_frozen",
+      "field_value": false
+    },
+    {
       "field_value": "这是一个由集成测试自动创建的工作项，测试完成后会自动删除。",
       "field_type_key": "multi_text",
-      "field_alias": "description"
-    },
-    {
-      "field_key": "auto_number",
-      "field_value": 78,
-      "field_type_key": "number",
-      "field_alias": "auto_number"
-    },
-    {
-      "field_key": "archiving_status",
-      "field_value": false,
-      "field_type_key": "bool",
-      "field_alias": "archiving_status"
+      "field_alias": "description",
+      "field_key": "description"
     }
-  ],
-  "template_type": "",
-  "created_at": 1768494212373,
-  "work_item_type_key": "670f3cdaddd89a6fa8f18e65",
-  "pattern": "State",
-  "deleted_by": "",
-  "updated_at": 1768494212373,
-  "simple_name": "zhuliucheng",
-  "template_id": 1961905,
-  "project_key": "66bb463229e5e58856b4ed19",
-  "work_item_status": {
-    "is_init_state": true,
-    "updated_at": 1768494212373,
-    "updated_by": "7387857889332969475",
-    "state_key": "started",
-    "is_archived_state": false
-  }
+  ]
 }
