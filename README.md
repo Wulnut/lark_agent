@@ -147,20 +147,105 @@ FEISHU_PROJECT_KEY=默认项目KEY (可选)
 }
 ```
 
-### 2. n8n / HTTP 调用
+### 2. n8n / HTTP 调用指南
 
-服务启动后，HTTP 端口默认为 `8002`。
+服务启动后，HTTP 端口默认为 `8002`。通过 `POST /call_tool` 端点可以调用所有 MCP 工具。
 
-* **健康检查**: `GET http://localhost:8002/health`
-* **调用工具**: `POST http://localhost:8002/call_tool`
+**基础信息:**
 
-    ```json
-    {
-      "tool_name": "list_projects",
-      "parameters": {},
-      "user_key": "your_user_key"
-    }
-    ```
+* **URL**: `http://localhost:8002/call_tool`
+* **Method**: `POST`
+* **Headers**: `Content-Type: application/json`
+
+**常用请求示例:**
+
+#### 1. 列出项目 (`list_projects`)
+
+```json
+{
+  "tool_name": "list_projects",
+  "parameters": {}
+}
+```
+
+#### 2. 创建任务 (`create_task`)
+
+```json
+{
+  "tool_name": "create_task",
+  "parameters": {
+    "project": "SR6D2VA-7552-Lark",
+    "work_item_type": "Issue管理",
+    "name": "修复登录页面 Bug",
+    "priority": "P0",
+    "assignee": "张三"
+  }
+}
+```
+
+#### 3. 查询任务 (`get_tasks`)
+
+```json
+{
+  "tool_name": "get_tasks",
+  "parameters": {
+    "project": "项目名称或Key",
+    "name_keyword": "登录",
+    "status": "进行中",
+    "page_size": 20
+  }
+}
+```
+
+#### 4. 获取详情 (`get_task_detail`)
+
+```json
+{
+  "tool_name": "get_task_detail",
+  "parameters": {
+    "issue_id": 123456789
+  }
+}
+```
+
+#### 5. 更新任务 (`update_task`)
+
+```json
+{
+  "tool_name": "update_task",
+  "parameters": {
+    "issue_id": 123456789,
+    "status": "已完成",
+    "priority": "P1",
+    "fields_json": "{\"SoC Vendor\": \"Amlogic\", \"DDR Size\": \"4GB\"}"
+  }
+}
+```
+
+#### 6. 批量更新 (`batch_update_tasks`)
+
+```json
+{
+  "tool_name": "batch_update_tasks",
+  "parameters": {
+    "issue_ids": [10001, 10002], 
+    "status": "已完成",
+    "priority": "P1"
+  }
+}
+```
+
+#### 7. 查询字段选项 (`get_task_options`)
+
+```json
+{
+  "tool_name": "get_task_options",
+  "parameters": {
+    "field_name": "status",
+    "project": "项目名称"
+  }
+}
+```
 
 ---
 
