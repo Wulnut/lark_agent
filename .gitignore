@@ -10,3 +10,4 @@ dist/
 opencode.jsonc
 tests/fixtures/snapshots/
 .mcp.json
+.worktrees/
