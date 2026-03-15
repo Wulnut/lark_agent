@@ -27,7 +27,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, List, Any, Callable, TypeVar, cast
+from typing import Optional, List, Any, Callable, TypeVar, cast, Dict
 import functools
 import httpx
 
@@ -37,6 +37,9 @@ from src.core.config import settings
 from src.core.context import user_key_context
 from src.providers.lark_project.managers import MetadataManager
 from src.providers.lark_project.work_item_provider import WorkItemProvider
+from src.providers.lark_project.comment_provider import CommentProvider
+from src.providers.lark_project.workflow_provider import WorkflowProvider
+from src.providers.lark_project.hierarchy_provider import HierarchyProvider
 
 
 def _mask_sensitive(value: str, visible_chars: int = 4) -> str:
@@ -364,38 +367,122 @@ def _validate_page_params(page_num: int, page_size: int) -> tuple[int, int]:
 def _create_provider(
     project: Optional[str] = None, work_item_type: Optional[str] = None
 ) -> WorkItemProvider:
-    """
-    根据 project 参数创建 Provider
+    """根据 project 参数创建 WorkItemProvider。
 
     自动判断传入的是 project_key 还是 project_name，并相应处理。
     如果未提供 project，则使用环境变量 FEISHU_PROJECT_KEY。
 
     Args:
-        project: 项目标识符（可以是 project_key 或 project_name），可选
-        work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理" 等
+        project: 项目标识符（可以是 project_key 或 project_name），可选。
+        work_item_type: 工作项类型名称（可选），如 "需求管理"、"Issue管理" 等。
 
     Returns:
-        WorkItemProvider 实例
+        WorkItemProvider 实例。
     """
-    # 规范化参数：将空字符串视为 None
     project = _normalize_string_param(project)
     work_item_type = _normalize_string_param(work_item_type)
 
-    # 使用字典解包构建参数
     kwargs: dict[str, str] = {}
 
     if work_item_type:
         kwargs["work_item_type_name"] = work_item_type
 
     if project:
-        # 根据格式判断是 project_key 还是 project_name
         key = "project_key" if _is_project_key_format(project) else "project_name"
         kwargs[key] = project
         logger.debug("Treating '%s' as %s", _mask_project(project), key)
-    else:
-        logger.debug("Using default project from FEISHU_PROJECT_KEY")
 
     return WorkItemProvider(**kwargs)
+
+
+def _create_comment_provider(
+    project: Optional[str] = None, work_item_type: Optional[str] = None
+) -> CommentProvider:
+    """根据 project 参数创建 CommentProvider。
+
+    与 _create_provider 相同的 project/type 解析逻辑，但返回评论能力 Provider。
+
+    Args:
+        project: 项目标识符（可以是 project_key 或 project_name），可选。
+        work_item_type: 工作项类型名称（可选）。
+
+    Returns:
+        CommentProvider 实例。
+    """
+    project = _normalize_string_param(project)
+    work_item_type = _normalize_string_param(work_item_type)
+
+    kwargs: dict[str, str] = {}
+
+    if work_item_type:
+        kwargs["work_item_type_name"] = work_item_type
+
+    if project:
+        key = "project_key" if _is_project_key_format(project) else "project_name"
+        kwargs[key] = project
+        logger.debug("Treating '%s' as %s", _mask_project(project), key)
+
+    return CommentProvider(**kwargs)
+
+
+def _create_workflow_provider(
+    project: Optional[str] = None, work_item_type: Optional[str] = None
+) -> WorkflowProvider:
+    """根据 project 参数创建 WorkflowProvider。
+
+    与 _create_provider / _create_comment_provider 保持一致的 project/type 解析策略。
+
+    Args:
+        project: 项目标识符（可以是 project_key 或 project_name），可选。
+        work_item_type: 工作项类型名称（可选）。
+
+    Returns:
+        WorkflowProvider 实例。
+    """
+    project = _normalize_string_param(project)
+    work_item_type = _normalize_string_param(work_item_type)
+
+    kwargs: dict[str, str] = {}
+
+    if work_item_type:
+        kwargs["work_item_type_name"] = work_item_type
+
+    if project:
+        key = "project_key" if _is_project_key_format(project) else "project_name"
+        kwargs[key] = project
+        logger.debug("Treating '%s' as %s", _mask_project(project), key)
+
+    return WorkflowProvider(**kwargs)
+
+
+def _create_hierarchy_provider(
+    project: Optional[str] = None, work_item_type: Optional[str] = None
+) -> HierarchyProvider:
+    """根据 project 参数创建 HierarchyProvider。
+
+    与 _create_provider / _create_comment_provider / _create_workflow_provider 保持一致的 project/type 解析策略。
+
+    Args:
+        project: 项目标识符（可以是 project_key 或 project_name），可选。
+        work_item_type: 工作项类型名称（可选）。
+
+    Returns:
+        HierarchyProvider 实例。
+    """
+    project = _normalize_string_param(project)
+    work_item_type = _normalize_string_param(work_item_type)
+
+    kwargs: dict[str, str] = {}
+
+    if work_item_type:
+        kwargs["work_item_type_name"] = work_item_type
+
+    if project:
+        key = "project_key" if _is_project_key_format(project) else "project_name"
+        kwargs[key] = project
+        logger.debug("Treating '%s' as %s", _mask_project(project), key)
+
+    return HierarchyProvider(**kwargs)
 
 
 @mcp.tool()
@@ -688,6 +775,454 @@ async def get_tasks(
             exc_info=True,
         )
         return "获取任务列表失败: 系统内部错误"
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("添加评论")
+async def add_task_comment(
+    issue_id: int,
+    content: str,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """
+    为指定工作项添加一条评论（纯文本）。
+
+    适用场景:
+    - 需要在工作项下沉淀沟通结论、会议纪要、处理记录
+    - 希望 Agent 在更新字段之外留下“可审计的文字说明”
+
+    Args:
+        issue_id: 工作项 ID，必填。
+        content: 评论内容（纯文本），必填。内容为空会报错。
+        project: 项目标识符（可选）。可以是项目名称或 project_key。
+                 不传则使用环境变量默认项目。
+        work_item_type: 工作项类型名称（可选）。不传则使用默认类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
+
+    Returns:
+        JSON 字符串。
+        - success=true 时，data 至少包含 comment_id。
+        - 失败时返回纯文本错误信息（由 with_error_handling 统一处理）。
+
+    Examples:
+        add_task_comment(issue_id=123, content="已与研发确认：本周五前完成联调")
+    """
+    provider = _create_comment_provider(project, work_item_type)
+    result = await provider.add_comment(issue_id, content)
+    return _success_response(result)
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("获取评论列表")
+async def list_task_comments(
+    issue_id: int,
+    page_num: int = 1,
+    page_size: int = 20,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """
+    获取指定工作项下的评论列表。
+
+    Args:
+        issue_id: 工作项 ID。
+        page_num: 页码，从 1 开始（默认 1）。
+        page_size: 每页数量（默认 20，最大值由服务端限制）。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量 FEISHU_PROJECT_KEY 指定的默认项目。
+        work_item_type: 工作项类型名称（可选）。不传则使用默认类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+        data 格式:
+        {
+          "total": int,
+          "page_num": int,
+          "page_size": int,
+          "items": [
+            {
+              "comment_id": str|int,
+              "author": Any,
+              "create_time": Any,
+              "content": str
+            }
+          ]
+        }
+
+    Examples:
+        list_task_comments(issue_id=123, page_num=1, page_size=20)
+    """
+    provider = _create_comment_provider(project, work_item_type)
+    result = await provider.list_comments(issue_id, page_num=page_num, page_size=page_size)
+    return _success_response(result)
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("更新评论")
+async def update_task_comment(
+    issue_id: int,
+    comment_id: str,
+    content: str,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """
+    更新指定评论内容（纯文本）。
+
+    Args:
+        issue_id: 工作项 ID。
+        comment_id: 评论 ID。
+        content: 新的评论内容（纯文本）。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量 FEISHU_PROJECT_KEY 指定的默认项目。
+        work_item_type: 工作项类型名称（可选）。不传则使用默认类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式:
+        {
+          "issue_id": int,
+          "comment_id": str
+        }
+
+        失败时返回纯文本错误信息（由 with_error_handling 统一处理），常见原因包括：
+        - comment_id 不存在
+        - 当前用户无权限编辑该评论
+        - 评论内容为空
+
+    Examples:
+        update_task_comment(issue_id=123, comment_id="c1", content="补充：已完成回归测试")
+    """
+    provider = _create_comment_provider(project, work_item_type)
+    await provider.update_comment(issue_id, comment_id, content)
+    return _success_response({"issue_id": issue_id, "comment_id": comment_id})
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("删除评论")
+async def delete_task_comment(
+    issue_id: int,
+    comment_id: str,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """
+    删除指定评论。
+
+    Args:
+        issue_id: 工作项 ID。
+        comment_id: 评论 ID。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量 FEISHU_PROJECT_KEY 指定的默认项目。
+        work_item_type: 工作项类型名称（可选）。不传则使用默认类型。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式:
+        {
+          "issue_id": int,
+          "comment_id": str
+        }
+
+        失败时返回纯文本错误信息（由 with_error_handling 统一处理），常见原因包括：
+        - comment_id 不存在
+        - 当前用户无权限删除该评论
+
+    Examples:
+        delete_task_comment(issue_id=123, comment_id="c1")
+    """
+    provider = _create_comment_provider(project, work_item_type)
+    await provider.delete_comment(issue_id, comment_id)
+    return _success_response({"issue_id": issue_id, "comment_id": comment_id})
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("获取流转必填信息")
+async def get_task_transition_requirements(
+    issue_id: int,
+    target_status: str,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    mode: str = "",
+    user_key: Optional[str] = None,
+) -> str:
+    """获取将指定工作项流转到目标状态前的必填信息要求。
+
+    该工具用于在执行状态流转前，先询问系统：从当前状态流转到 target_status 需要补全哪些字段。
+    常见场景包括：
+    - 流转到“已完成/已关闭”时需要填写“解决方案”“原因”“验证人”等字段
+    - 流转到某些阶段需要指定角色负责人（role owners）或填写额外信息
+
+    本工具仅负责：
+    1) project/work_item_type 参数解析（project_name 与 project_key 分支）
+    2) 委托 WorkflowProvider 解析状态名并调用 WorkflowAPI.get_transition_required_info
+    3) 返回统一的 JSON envelope（success/data），便于 LLM 稳定解析
+
+    注意：
+    - 成功时返回 JSON 字符串（success=true）。
+    - 失败时返回纯文本错误信息（由 with_error_handling 统一处理），不会返回 JSON。
+
+    Args:
+        issue_id: 工作项 ID，必填。
+        target_status: 目标状态名称（人类可读），必填。例如："已完成"、"待处理"。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量 FEISHU_PROJECT_KEY 指定的默认项目。
+        work_item_type: 工作项类型名称（可选）。例如："问题管理"、"Issue管理"。
+        mode: 工作流查询模式（可选）。透传给后端接口，用于控制必填项返回策略。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)，用于以特定用户身份进行操作。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式至少包含：
+        {
+          "required_fields": [ ... ]
+        }
+
+        失败时返回纯文本错误信息（由 with_error_handling 统一处理），常见原因包括：
+        - target_status 无法匹配（会提示“可选状态”）
+        - 当前用户无权限查询该工作项的工作流信息
+        - 网络/系统异常
+
+    Examples:
+        # 查询将 Issue 123 流转到“已完成”前需要填哪些字段
+        get_task_transition_requirements(issue_id=123, target_status="已完成")
+    """
+    provider = _create_workflow_provider(project, work_item_type)
+    result = await provider.get_transition_requirements(
+        issue_id=issue_id,
+        target_status=target_status,
+        mode=mode,
+    )
+    return _success_response(result)
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("状态流转")
+async def transition_task_status(
+    issue_id: int,
+    target_status: str,
+    fields: Optional[List[dict]] = None,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    mode: str = "",
+    user_key: Optional[str] = None,
+) -> str:
+    """将指定工作项流转到目标状态。
+
+    该工具用于执行飞书项目工作项的状态流转（Workflow Transition）。
+    它会根据 target_status（人类可读的状态名称）自动解析出对应的 state_key / transition_id，
+    并调用后端的 workflow state_change 接口完成流转。
+
+    使用建议：
+    - 在调用本工具前，建议先调用 get_task_transition_requirements 获取必填字段要求。
+    - fields 参数当前仅支持 list[dict] 透传（最小实现），用于满足流转前的必填字段。
+      例如：[{"field_key": "field_x", "field_value": "y"}]。
+
+    注意：
+    - 成功时返回 JSON 字符串（success=true）。
+    - 失败时返回纯文本错误信息（由 with_error_handling 统一处理），不会返回 JSON。
+
+    Args:
+        issue_id: 工作项 ID，必填。
+        target_status: 目标状态名称（人类可读），必填。
+        fields: 流转时需要提交的字段列表（可选）。元素为 dict，直接透传给后端。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量默认项目。
+        work_item_type: 工作项类型名称（可选）。
+        mode: 流转模式（可选）。当前仅透传给 Provider，预留未来扩展。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式至少包含：
+        {
+          "issue_id": int,
+          "target_status": str
+        }
+
+        失败时返回纯文本错误信息（由 with_error_handling 统一处理），常见原因包括：
+        - target_status 无法匹配（会提示“可选状态”）
+        - 流转失败（后端返回权限/参数错误等）
+
+    Examples:
+        # 直接流转（无额外字段）
+        transition_task_status(issue_id=123, target_status="已完成")
+
+        # 带必填字段流转
+        transition_task_status(
+            issue_id=123,
+            target_status="已完成",
+            fields=[{"field_key": "field_resolution", "field_value": "已修复"}],
+        )
+    """
+    provider = _create_workflow_provider(project, work_item_type)
+    result = await provider.transition_task_status(
+        issue_id=issue_id,
+        target_status=target_status,
+        fields=cast(Optional[List[Dict[str, Any]]], fields),
+        mode=mode,
+    )
+    return _success_response(result)
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("获取子任务列表")
+async def list_child_tasks(
+    parent_issue_id: int,
+    relation_name: Optional[str] = None,
+    page_num: int = 1,
+    page_size: int = 20,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """列出指定父工作项下的子任务（通过“空间关联关系”规则实现）。
+
+    背景说明：
+    - 飞书项目中的“父子/子任务”通常不是一个固定字段，而是通过“关联关系规则（Relation Rule）”实现。
+    - 同一个项目空间可能存在多条关联规则（例如："子任务"、"关联"、"阻塞"）。
+      因此本工具支持 relation_name 参数用于选择具体规则。
+
+    本工具的行为：
+    1) 解析 project / work_item_type 参数（支持 project_name 与 project_key 两种输入）。
+    2) 通过 HierarchyProvider 选择关联规则：
+       - 若 relation_name 传入：按名称精确匹配。
+       - 若未传：若规则只有 1 条则自动选择；若 >1 条则报错提示需要指定。
+    3) 调用 RelationAPI.work_item_list 获取关联的 work_item_ids。
+
+    注意：
+    - 成功时返回 JSON 字符串（success=true）。
+    - 失败时返回纯文本错误信息（由 with_error_handling 统一处理），不会返回 JSON。
+
+    Args:
+        parent_issue_id: 父工作项 ID（必填）。
+        relation_name: 关联规则名称（可选）。规则多于 1 条时建议必填。
+        page_num: 页码，从 1 开始（默认 1）。
+        page_size: 每页数量（默认 20）。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用环境变量 FEISHU_PROJECT_KEY 指定的默认项目。
+        work_item_type: 工作项类型名称（可选）。例如："问题管理"、"Issue管理"。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式：
+        {
+          "work_item_ids": [int, ...]
+        }
+
+    Examples:
+        # 获取父任务 123 的子任务列表（自动选择唯一规则）
+        list_child_tasks(parent_issue_id=123)
+
+        # 指定关联规则名称
+        list_child_tasks(parent_issue_id=123, relation_name="子任务")
+    """
+    provider = _create_hierarchy_provider(project, work_item_type)
+    ids = await provider.list_child_tasks(
+        parent_issue_id=parent_issue_id,
+        relation_name=relation_name,
+        page_num=page_num,
+        page_size=page_size,
+    )
+    return _success_response({"work_item_ids": ids})
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("绑定子任务")
+async def bind_child_tasks(
+    parent_issue_id: int,
+    child_issue_ids: List[int],
+    relation_name: Optional[str] = None,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """将多个工作项绑定为指定父工作项的“子任务”（通过关联关系规则实现）。
+
+    Args:
+        parent_issue_id: 父工作项 ID（必填）。
+        child_issue_ids: 子工作项 ID 列表（必填）。
+        relation_name: 关联规则名称（可选）。当存在多条规则时建议必填。
+        project: 项目标识符（可选）。可以是项目名称或 project_key；不传则使用默认项目。
+        work_item_type: 工作项类型名称（可选）。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式：
+        {
+          "parent_issue_id": int,
+          "child_issue_ids": [int, ...],
+          "relation_name": str
+        }
+
+    失败时返回纯文本错误信息（由 with_error_handling 统一处理）。
+    """
+    provider = _create_hierarchy_provider(project, work_item_type)
+    result = await provider.bind_child_tasks(
+        parent_issue_id=parent_issue_id,
+        child_issue_ids=child_issue_ids,
+        relation_name=relation_name,
+    )
+    return _success_response(result)
+
+
+@mcp.tool()
+@with_user_context
+@with_error_handling("解绑子任务")
+async def unbind_child_tasks(
+    parent_issue_id: int,
+    relation_name: Optional[str] = None,
+    project: Optional[str] = None,
+    work_item_type: Optional[str] = None,
+    user_key: Optional[str] = None,
+) -> str:
+    """解绑指定父工作项的子任务关系（按关联关系规则整体解绑）。
+
+    当前最小实现：
+    - 调用 RelationAPI.delete 删除父工作项在该规则下的关联关系（服务端语义通常为“清空该规则下的绑定”）。
+
+    Args:
+        parent_issue_id: 父工作项 ID（必填）。
+        relation_name: 关联规则名称（可选）。
+        project: 项目标识符（可选）。
+        work_item_type: 工作项类型名称（可选）。
+        user_key: (可选) 飞书用户标识符 (X-USER-KEY)。
+
+    Returns:
+        JSON 字符串。
+
+        成功时（success=true）data 格式：
+        {
+          "parent_issue_id": int,
+          "relation_name": str
+        }
+
+    失败时返回纯文本错误信息（由 with_error_handling 统一处理）。
+    """
+    provider = _create_hierarchy_provider(project, work_item_type)
+    result = await provider.unbind_child_tasks(
+        parent_issue_id=parent_issue_id,
+        relation_name=relation_name,
+    )
+    return _success_response(result)
 
 
 @mcp.tool()

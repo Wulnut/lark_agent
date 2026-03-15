@@ -25,6 +25,9 @@ from .metadata import MetadataAPI
 from .field import FieldAPI
 from .work_item import WorkItemAPI
 from .user import UserAPI
+from .comment import CommentAPI
+from .workflow import WorkflowAPI
+from .relation import RelationAPI
 
 __all__ = [
     "ProjectAPI",
@@ -32,4 +35,7 @@ __all__ = [
     "FieldAPI",
     "WorkItemAPI",
     "UserAPI",
+    "CommentAPI",
+    "WorkflowAPI",
+    "RelationAPI",
 ]
