@@ -11,13 +11,16 @@
 | **空间配置** | 2 | 2 | 0 | 100% |
 | **工作项配置** | 8 | 8 | 0 | 100% |
 | **流程配置** | 3 | 3 | 0 | 100% |
+| **工作流运行时** | 3 | 3 | 0 | 100% |
+| **评论** | 4 | 4 | 0 | 100% |
+| **空间关联** | 4 | 4 | 0 | 100% |
 | **安全配置** | 2 | 0 | 2 | 0% |
 | **附件管理** | 4 | 3 | 1 | 75% |
 | **用户管理** | 6 | 5 | 1 | 83% |
 | **视图管理** | 2 | 0 | 2 | 0% |
 | **工作项管理** | 10 | 10 | 0 | 100% |
 | **工时管理** | 2 | 2 | 0 | 100% |
-| **总计** | **45** | **39** | **6** | **87%** |
+| **总计** | **56** | **50** | **6** | **89%** |
 
 > 注：插件鉴权中的 Token 获取与刷新已在 `src/core/auth.py` 中底层实现，不计入 api 目录的统计但视为已通过核心层支持。
 
@@ -46,6 +49,9 @@
 | 获取空间详情 | POST | `/open_api/projects/detail` | ✅ 已实现 | `ProjectAPI.get_project_details` |
 
 ### 3. 配置管理 (Configuration)
+
+> 注：本节的「流程配置」仅包含流程定义/模板等配置类接口。
+> 工作项的运行时流转能力（状态流转、必填字段查询、workflow/query）见下方「工作流运行时」。
 
 #### 3.1 空间配置
 
@@ -110,6 +116,38 @@
 ### 6. 工作项管理 (Work Items)
 
 源码文件：`src/providers/lark_project/api/work_item.py`
+
+### 7. 评论 (Comments)
+
+源码文件：`src/providers/lark_project/api/comment.py`
+
+| 接口名称 | 方法 | 路径 | 状态 | 对应方法 |
+| :--- | :--- | :--- | :--- | :--- |
+| 创建评论 | POST | `/open_api/:project_key/work_item/:key/:id/comment/create` | ✅ 已实现 | `CommentAPI.create` |
+| 获取评论列表 | GET | `/open_api/:project_key/work_item/:key/:id/comments` | ✅ 已实现 | `CommentAPI.list` |
+| 更新评论 | PUT | `/open_api/:project_key/work_item/:key/:id/comment/:comment_id` | ✅ 已实现 | `CommentAPI.update` |
+| 删除评论 | DELETE | `/open_api/:project_key/work_item/:key/:id/comment/:comment_id` | ✅ 已实现 | `CommentAPI.delete` |
+
+### 8. 工作流运行时 (Workflow Runtime)
+
+源码文件：`src/providers/lark_project/api/workflow.py`
+
+| 接口名称 | 方法 | 路径 | 状态 | 对应方法 |
+| :--- | :--- | :--- | :--- | :--- |
+| 查询工作项工作流信息 | POST | `/open_api/:project_key/work_item/:key/:id/workflow/query` | ✅ 已实现 | `WorkflowAPI.query_work_item_workflow` |
+| 获取流转前必填信息 | POST | `/open_api/work_item/transition_required_info/get` | ✅ 已实现 | `WorkflowAPI.get_transition_required_info` |
+| 执行状态流转 | POST | `/open_api/:project_key/workflow/:key/:id/node/state_change` | ✅ 已实现 | `WorkflowAPI.state_change` |
+
+### 9. 空间关联 (Relations)
+
+源码文件：`src/providers/lark_project/api/relation.py`
+
+| 接口名称 | 方法 | 路径 | 状态 | 对应方法 |
+| :--- | :--- | :--- | :--- | :--- |
+| 获取关联规则 | POST | `/open_api/:project_key/relation/rules` | ✅ 已实现 | `RelationAPI.rules` |
+| 获取关联工作项列表 | POST | `/open_api/:project_key/relation/:key/:id/work_item_list` | ✅ 已实现 | `RelationAPI.work_item_list` |
+| 批量绑定关联 | POST | `/open_api/:project_key/relation/:key/:id/batch_bind` | ✅ 已实现 | `RelationAPI.batch_bind` |
+| 删除关联 | DELETE | `/open_api/:project_key/relation/:key/:id` | ✅ 已实现 | `RelationAPI.delete` |
 
 | 接口名称 | 方法 | 路径 | 状态 | 对应方法 |
 | :--- | :--- | :--- | :--- | :--- |
